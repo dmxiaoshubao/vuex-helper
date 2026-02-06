@@ -25,6 +25,15 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }));
 
+    // Re-index on configuration change
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('vuexHelper.storeEntry')) {
+            console.log('Configuration changed, re-indexing store...');
+            storeIndexer.index();
+            vscode.window.showInformationMessage('Vuex Helper: Store configuration updated. Re-indexing...');
+        }
+    }));
+
     const selector = [{ language: 'vue', scheme: 'file' }, { language: 'javascript', scheme: 'file' }, { language: 'typescript', scheme: 'file' }];
 
     context.subscriptions.push(
