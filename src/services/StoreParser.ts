@@ -328,16 +328,31 @@ export class StoreParser {
     }
     private extractDocumentation(node: any): string | undefined {
         if (node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0) {
-            return node.leadingComments.map((comment: any) => {
-                // Remove the "/**" "*/" and "*"
-                let value = comment.value.trim();
-                // Simple stripping of * for JSDoc block comments
-                if (comment.type === 'CommentBlock') {
-                     value = value.replace(/^\*+/gm, '').replace(/\*+$/gm, '').trim(); // Remove leading/trailing * lines
-                     // also remove * at start of lines
-                     value = value.split('\n').map((line: string) => line.trim().replace(/^\*\s?/, '')).join('\n');
-                }
-                return value; 
+            // Filter for JSDoc comments only: must be Block Comment starting with * (which implies /** in source)
+            const jsDocComments = node.leadingComments.filter((comment: any) => 
+                comment.type === 'CommentBlock' && comment.value.startsWith('*')
+            );
+
+            if (jsDocComments.length === 0) return undefined;
+
+            return jsDocComments.map((comment: any) => {
+                let value = comment.value;
+                // Remove the initial * from /**
+                // value is string content, excluding /* and */. 
+                // For /** docs */, value is "* docs "
+                
+                // Remove leading *
+                value = value.substring(1).trim(); 
+
+                // Handle multiline formatting: strip leading * from each line
+                // Example:
+                // * First line
+                // * Second line
+                return value.split('\n').map((line: string) => {
+                    const trimmed = line.trim();
+                    // Remove leading * and optional space
+                    return trimmed.replace(/^\*\s?/, '');
+                }).join('\n').trim();
             }).join('\n\n');
         }
         return undefined;
