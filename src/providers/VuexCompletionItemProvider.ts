@@ -20,13 +20,12 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
         token: vscode.CancellationToken,
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | undefined> {
-        
+        const storeMap = this.storeIndexer.getStoreMap();
+        if (!storeMap) return undefined;
+
         // 1. Vuex Context (String literals) - existing logic
         const vuexContext = this.contextScanner.getContext(document, position);
         if (vuexContext && vuexContext.type !== 'unknown') {
-            const storeMap = this.storeIndexer.getStoreMap();
-            if (!storeMap) return undefined;
-
             let items: { name: string, documentation?: string, modulePath: string[] }[] = [];
             let kind = vscode.CompletionItemKind.Property;
 
@@ -50,55 +49,49 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                 items = items.filter(i => i.modulePath.join('/') === ns);
             }
 
-            return items.map(item => {
+            const results = items.map(item => {
                 const label = vuexContext.namespace ? item.name : [...item.modulePath, item.name].join('/');
                 const completionItem = new vscode.CompletionItem(label, kind);
-                completionItem.detail = `Vuex ${vuexContext.type}`;
+                completionItem.detail = `[Vuex] ${vuexContext.type}`;
+                completionItem.sortText = `0${label}`; // Top priority
                 if (item.documentation) {
                     completionItem.documentation = new vscode.MarkdownString(item.documentation);
                 }
                 return completionItem;
             });
+            return results;
         }
 
         // 2. Component Method Completion (this.)
-        // Only trigger if we are not in a string (already handled by contextScanner returning unknown or type if in string)
-        // If contextScanner returns unknown or undefined, we might be in code.
-        
         const lineText = document.lineAt(position.line).text;
         const prefix = lineText.substring(0, position.character);
         
-        // Check if trigged by 'this.' 
-        // Or if the user typed `this.SET`...
-        const dotIndex = prefix.lastIndexOf('.');
-        if (dotIndex !== -1) {
-            const wordBeforeDot = prefix.substring(0, dotIndex).trim();
-            if (wordBeforeDot.endsWith('this')) { // matches 'this' or 'vm' if we want later
-                 const mapping = this.componentMapper.getMapping(document);
-                 const items: vscode.CompletionItem[] = [];
-                 const storeMap = this.storeIndexer.getStoreMap();
+        const match = prefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
+        
+        if (match) {
+             const mapping = this.componentMapper.getMapping(document);
+             const items: vscode.CompletionItem[] = [];
 
-                 for (const localName in mapping) {
-                    const info = mapping[localName];
-                    let kind = vscode.CompletionItemKind.Method; 
-                    if (info.type === 'state') kind = vscode.CompletionItemKind.Field;
-                    if (info.type === 'getter') kind = vscode.CompletionItemKind.Property;
-                    
-                    const item = new vscode.CompletionItem(localName, kind);
-                    item.detail = `Mapped ${info.type} -> ${info.namespace ? info.namespace + '/' : ''}${info.originalName}`;
-                    
-                    if (storeMap) {
-                         const match = this.findStoreItem(info.originalName, info.type, info.namespace, storeMap);
-                         if (match && match.documentation) {
-                             item.documentation = new vscode.MarkdownString(match.documentation);
-                         }
-                    }
-                     
-                    items.push(item);
-                }
+             for (const localName in mapping) {
+                const info = mapping[localName];
+                let kind = vscode.CompletionItemKind.Method; 
+                if (info.type === 'state') kind = vscode.CompletionItemKind.Field;
+                if (info.type === 'getter') kind = vscode.CompletionItemKind.Property;
                 
-                if (items.length > 0) return items;
+                const item = new vscode.CompletionItem(localName, kind);
+                item.detail = `[Vuex Mapped] ${info.type} -> ${info.namespace ? info.namespace + '/' : ''}${info.originalName}`;
+                item.sortText = '0'; // Top priority
+                item.preselect = true;
+                
+                const storeMatch = this.findStoreItem(info.originalName, info.type, info.namespace, storeMap);
+                if (storeMatch && storeMatch.documentation) {
+                    item.documentation = new vscode.MarkdownString(storeMatch.documentation);
+                }
+                 
+                items.push(item);
             }
+            
+            if (items.length > 0) return items;
         }
 
         return undefined;

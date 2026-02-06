@@ -16,38 +16,46 @@ export interface ComponentMapInfo {
 
 export class ComponentMapper {
     
+    private cache: Map<string, { version: number, mapping: ComponentMapInfo }> = new Map();
+
     /**
      * Analyzes the given document to find Vuex mapHelpers and build a mapping.
      */
     public getMapping(document: vscode.TextDocument): ComponentMapInfo {
         const text = document.getText();
-        const mapping: ComponentMapInfo = {};
+        const uri = document.uri.toString();
         
-        // For Vue files, extract script content?
-        // Actually babel parser handles generic JS. But if it contains HTML/template it might fail.
-        // Simple extraction for Vue:
+        // Use cache if document hasn't changed or if current parse fails
+        const cached = this.cache.get(uri);
+        
+        // For Vue files, extract script content
         let scriptContent = text;
-        let offset = 0;
         
         if (document.languageId === 'vue') {
             const scriptMatch = text.match(/<script[^>]*>([\s\S]*?)<\/script>/);
             if (scriptMatch) {
                 scriptContent = scriptMatch[1];
-                offset = scriptMatch.index! + scriptMatch[0].indexOf(scriptMatch[1]);
             }
         }
         
         try {
             const ast = parser.parse(scriptContent, {
                 sourceType: 'module',
-                plugins: ['typescript', 'decorators-legacy', 'classProperties'] // Add 'jsx' if needed, but 'typescript' usually covers most
+                plugins: ['typescript', 'decorators-legacy', 'classProperties', 'jsx'],
+                errorRecovery: true // Crucial for completion while typing
             });
             
+            const mapping: ComponentMapInfo = {};
+            const validHelpers = ['mapState', 'mapGetters', 'mapMutations', 'mapActions'];
+
             traverse(ast, {
                 CallExpression(path: any) {
                     const callee = path.node.callee;
-                    if (callee.type === 'Identifier' && callee.name.startsWith('map')) {
-                        const helperName = callee.name;
+                    const calleeName = callee.name || (callee.property && callee.property.name);
+
+                    if (typeof calleeName === 'string' && validHelpers.includes(calleeName)) {
+                        const helperName = calleeName;
+                        
                         let type: 'state' | 'getter' | 'mutation' | 'action' | undefined;
                         
                         if (helperName === 'mapState') type = 'state';
@@ -84,18 +92,15 @@ export class ComponentMapper {
                                 }
                             });
                         } 
-                        // Handle Object: mapState({ alias: 'count' }) or mapState({ alias: state => state.count }) <- ignoring functions for now
+                        // Handle Object: mapState({ alias: 'count' })
                         else if (mapObj.type === 'ObjectExpression') {
                             mapObj.properties.forEach((prop: any) => {
                                 if (prop.type === 'ObjectProperty') {
-                                    const localName = prop.key.name || prop.key.value; // Identifier or StringLiteral key
+                                    const localName = prop.key.name || prop.key.value;
                                     
-                                    // Value can be StringLiteral or ...
                                     if (prop.value.type === 'StringLiteral') {
-                                        const originalName = prop.value.value;
-                                        mapping[localName] = { type: type!, originalName, namespace };
+                                        mapping[localName] = { type: type!, originalName: prop.value.value, namespace };
                                     } 
-                                    // Complex cases (arrow function) are skipped for now
                                 }
                             });
                         }
@@ -103,11 +108,14 @@ export class ComponentMapper {
                 }
             });
             
+            // Success, update cache
+            this.cache.set(uri, { version: document.version, mapping });
+            return mapping;
+            
         } catch (e) {
-            // console.error('ComponentMapper parse error', e); 
-            // Silent fail is ok, maybe syntax error in user code
+            // console.error('[VuexHelper] ComponentMapper parse error', e);
+            // If failed (highly unlikely with errorRecovery, but still), return cache
+            return cached ? cached.mapping : {};
         }
-        
-        return mapping;
     }
 }

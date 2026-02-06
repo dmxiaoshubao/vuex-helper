@@ -3,16 +3,26 @@
 </template>
 
 <script>
-import { mapState, mapMutations } from "vuex";
+import { mapState, mapMutations, mapActions } from "vuex";
 
 export default {
+  data() {
+    return {
+      /**
+       * 本地数据
+       */
+      localAppName: "Custom Entry App",
+    };
+  },
   computed: {
     ...mapState(["appName"]),
   },
   methods: {
     ...mapMutations(["SET_APP_NAME"]),
+    ...mapActions(["setAppNameAsync"]),
     test() {
       this.SET_APP_NAME("New Name");
+      this.setAppNameAsync("New Name Async");
     },
   },
 };

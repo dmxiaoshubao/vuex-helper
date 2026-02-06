@@ -15,7 +15,17 @@ const mutations = {
   },
 };
 
+const actions = {
+  /** 设置应用名称 */
+  setAppNameAsync({ commit }, name) {
+    setTimeout(() => {
+      commit("SET_APP_NAME", name);
+    }, 1000);
+  },
+};
+
 export default new Vuex.Store({
   state,
   mutations,
+  actions,
 });
