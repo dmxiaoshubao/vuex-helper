@@ -55,4 +55,8 @@ export class StoreIndexer {
     }
 
     // ... getters, state
+
+    public getNamespace(filePath: string): string[] | undefined {
+        return this.storeParser.getNamespace(filePath);
+    }
 }

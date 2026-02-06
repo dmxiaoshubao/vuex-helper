@@ -1,4 +1,5 @@
 const state = {
+  /** 你好呀 */
   name: "John Doe",
 };
 
@@ -12,6 +13,9 @@ const mutations = {
   SET_NAME(state, name) {
     state.name = name;
   },
+  testName(state, name) {
+    state.name = name;
+  },
 };
 
 const actions = {
@@ -19,6 +23,10 @@ const actions = {
   // 更新名称
   updateName({ commit }, name) {
     commit("SET_NAME", name);
+  },
+  updateInfoAsync({ commit, dispatch }, name) {
+    commit("SET_NAME", name);
+    dispatch("updateName", name);
   },
 };
 

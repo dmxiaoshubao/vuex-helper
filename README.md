@@ -1,5 +1,7 @@
 # Vuex Helper
 
+[中文文档](./README.zh-CN.md)
+
 VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, and **Hover Information** for State, Getters, Mutations, and Actions.
 
 ## Features
@@ -66,13 +68,10 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 
 ## Release Notes
 
-### 0.1.0
+### 0.0.1
 
-Major update with stability and feature enhancements:
+Initial release with features:
 
-- **New**: Support for mapped component methods (`this.method`).
-- **New**: State type inference in Hover.
-- **New**: Configurable store entry path (`vuexHelper.storeEntry`).
-- **Improved**: `this.` completion trigger and prioritization.
-- **Improved**: AST error recovery for better suggestions while typing.
-- **Fixed**: Namespace filtering and JSDoc extraction.
+- **Scoped Logic**: Commit and State completions are context-aware inside modules.
+- **Hover Support**: Local state hover tooltips in mutations/getters.
+- **Improved**: Namespace filtering and JSDoc support.

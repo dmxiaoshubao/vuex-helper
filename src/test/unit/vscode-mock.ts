@@ -15,7 +15,10 @@ export class Location {
 
 export const workspace = {
     workspaceFolders: [{ uri: { fsPath: '/mock/workspace' } }],
-    asRelativePath: (path: string | Uri) => path.toString()
+    asRelativePath: (path: string | Uri) => path.toString(),
+    getConfiguration: (section?: string) => ({
+        get: (key: string, defaultValue?: any) => defaultValue
+    })
 };
 
 export const window = {

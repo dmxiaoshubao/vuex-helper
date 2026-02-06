@@ -23,6 +23,8 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
         const storeMap = this.storeIndexer.getStoreMap();
         if (!storeMap) return undefined;
 
+        const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+
         // 1. Vuex Context (String literals) - existing logic
         const vuexContext = this.contextScanner.getContext(document, position);
         if (vuexContext && vuexContext.type !== 'unknown') {
@@ -47,10 +49,24 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             if (vuexContext.namespace) {
                 const ns = vuexContext.namespace;
                 items = items.filter(i => i.modulePath.join('/') === ns);
+            } else if (currentNamespace && (vuexContext.type === 'mutation' || vuexContext.type === 'action')) {
+                // If inside a module, scoped completion for commit/dispatch
+                // Filter to only current module items (Strict scoping as per user request)
+                const nsJoined = currentNamespace.join('/');
+                items = items.filter(i => i.modulePath.join('/') === nsJoined);
             }
 
             const results = items.map(item => {
-                const label = vuexContext.namespace ? item.name : [...item.modulePath, item.name].join('/');
+                let label = [...item.modulePath, item.name].join('/');
+                // If inside a module and matches current namespace, use short name
+                if (currentNamespace && item.modulePath.join('/') === currentNamespace.join('/')) {
+                    label = item.name;
+                }
+                // OR if explicit namespace arg was provided (handled by existing logic, but let's be safe)
+                if (vuexContext.namespace) {
+                     label = item.name;
+                }
+
                 const completionItem = new vscode.CompletionItem(label, kind);
                 completionItem.detail = `[Vuex] ${vuexContext.type}`;
                 completionItem.sortText = `0${label}`; // Top priority
@@ -62,9 +78,28 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             return results;
         }
 
-        // 2. Component Method Completion (this.)
+        // 2. In-Module State Completion (state.xxx)
         const lineText = document.lineAt(position.line).text;
         const prefix = lineText.substring(0, position.character);
+
+        if (currentNamespace && /\bstate\.$/.test(prefix)) {
+            const nsJoined = currentNamespace.join('/');
+            const items = storeMap.state.filter(s => s.modulePath.join('/') === nsJoined);
+            
+            return items.map(item => {
+                const completionItem = new vscode.CompletionItem(item.name, vscode.CompletionItemKind.Field);
+                completionItem.detail = `[Vuex Module] state`;
+                completionItem.sortText = '0'; 
+                if (item.documentation) {
+                    completionItem.documentation = new vscode.MarkdownString(item.documentation);
+                }
+                 // If we have type info, show it
+                if (item.displayType) {
+                    completionItem.detail += ` : ${item.displayType}`;
+                }
+                return completionItem;
+            });
+        }
         
         const match = prefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
         

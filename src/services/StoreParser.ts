@@ -14,6 +14,7 @@ export class StoreParser {
         mutations: [],
         actions: []
     };
+    private fileNamespaceMap: Map<string, string[]> = new Map();
 
     constructor(workspaceRoot: string) {
         this.pathResolver = new PathResolver(workspaceRoot);
@@ -22,6 +23,7 @@ export class StoreParser {
     public async parse(storeEntryPath: string): Promise<VuexStoreMap> {
         // Reset map
         this.storeMap = { state: [], getters: [], mutations: [], actions: [] };
+        this.fileNamespaceMap.clear();
         
         await this.parseModule(storeEntryPath, []);
         return this.storeMap;
@@ -29,6 +31,10 @@ export class StoreParser {
 
     private async parseModule(filePath: string, moduleNamespace: string[]) {
         if (!fs.existsSync(filePath)) return;
+        
+        // Normalize path for consistent lookup
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
 
         console.log(`Parsing module: ${filePath}, namespace: ${moduleNamespace.join('/')}`);
 
@@ -376,5 +382,10 @@ export class StoreParser {
             }).join('\n\n');
         }
         return undefined;
+    }
+
+    public getNamespace(filePath: string): string[] | undefined {
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        return this.fileNamespaceMap.get(normalizedPath);
     }
 }
