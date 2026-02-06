@@ -27,6 +27,24 @@ View JSDoc documentation and details without leaving your code.
 - **JSDoc Support**: Displays comments written in `/** ... */` format from your store definitions.
 - **Details**: Shows the type (State/Mutation/etc.) and the file path of the definition.
 
+### 4. Component Mapped Methods Support
+
+Full IntelliSense support for methods mapped via `mapHelpers` in your components.
+
+- **Completion**: Type `this.` to see mapped methods (e.g., `this.increment` mapped from `...mapMutations(['increment'])`).
+- **Definition**: Go to Definition on `this.methodName()`.
+- **Hover**: View documentation for mapped methods.
+
+### 5. Type Inference
+
+- **State Types**: Automatically infers and displays the type of State properties in hover tooltips (e.g., `(State) appName: string`).
+
+## Configuration
+
+You can configure the extension via `.vscode/settings.json` or `package.json`:
+
+- `vuexHelper.storeEntry` (default: `src/store/index.js`): Path to your Vuex store entry file. Supports aliases like `@/store/index.js` or relative paths.
+
 ## Supported Syntax
 
 - **Helper Functions**:
@@ -40,29 +58,21 @@ View JSDoc documentation and details without leaving your code.
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
   ```
-- **Multiline Support**:
+- **Component Methods**:
   ```javascript
-  ...mapMutations([
-    'INCREMENT',
-    'DECREMENT'
-  ])
+  this.increment(); // Mapped via mapMutations
+  this.appName; // Mapped via mapState
   ```
-
-## Requirements
-
-- A Vue 2 project with Vuex.
-- Store defined in `src/store/index.js` or `src/store/index.ts`.
-
-## Extension Settings
-
-- `vuexHelper.trace.server`: Traces the communication between VS Code and the language server.
 
 ## Release Notes
 
-### 0.0.1
+### 0.1.0
 
-Initial release with support for:
+Major update with stability and feature enhancements:
 
-- State, Getters, Mutations, Actions
-- Namespace filtering
-- JSDoc hover documentation
+- **New**: Support for mapped component methods (`this.method`).
+- **New**: State type inference in Hover.
+- **New**: Configurable store entry path (`vuexHelper.storeEntry`).
+- **Improved**: `this.` completion trigger and prioritization.
+- **Improved**: AST error recovery for better suggestions while typing.
+- **Fixed**: Namespace filtering and JSDoc extraction.

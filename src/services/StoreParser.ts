@@ -196,11 +196,31 @@ export class StoreParser {
                             new vscode.Position(p.key.loc.start.line - 1, p.key.loc.start.column)
                         ),
                         modulePath: namespace,
-                        documentation: this.extractDocumentation(p)
+                        documentation: this.extractDocumentation(p),
+                        displayType: this.inferType(p.value)
                     });
                 }
             });
         }
+    }
+
+    private inferType(node: any): string | undefined {
+        if (!node) return undefined;
+        // Basic literals
+        if (node.type === 'StringLiteral') return 'string';
+        if (node.type === 'NumericLiteral') return 'number';
+        if (node.type === 'BooleanLiteral') return 'boolean';
+        if (node.type === 'NullLiteral') return 'null';
+        // Complex types
+        if (node.type === 'ArrayExpression') return 'Array<any>'; // Could be inferred further
+        if (node.type === 'ObjectExpression') return 'Object';
+        if (node.type === 'NewExpression' && node.callee.type === 'Identifier') {
+            return node.callee.name; // e.g. 'new Date()' -> 'Date'
+        }
+        // Functions
+        if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') return 'Function';
+        
+        return undefined;
     }
 
     private processGetters(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>) {

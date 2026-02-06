@@ -85,7 +85,16 @@ export class VuexHoverProvider implements vscode.HoverProvider {
 
         if (result) {
             const md = new vscode.MarkdownString();
-            md.appendCodeblock(`${labelPrefix}: ${name}`, 'typescript');
+            
+            let label = `${labelPrefix}: ${name}`;
+            if (type === 'state') {
+                const stateInfo = result as any; // Cast to access displayType
+                if (stateInfo.displayType) {
+                    label += `: ${stateInfo.displayType}`;
+                }
+            }
+            
+            md.appendCodeblock(label, 'typescript');
             if (result.documentation) {
                 md.appendMarkdown(`\n\n${result.documentation}\n\n`);
             }

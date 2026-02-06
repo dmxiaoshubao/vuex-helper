@@ -5,6 +5,7 @@ export interface VuexStateInfo {
     defLocation: vscode.Location;
     modulePath: string[];
     documentation?: string;
+    displayType?: string; // e.g. "string", "number", "Array", "Object"
 }
 
 export interface VuexGetterInfo {
