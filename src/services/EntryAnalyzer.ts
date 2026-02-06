@@ -74,12 +74,25 @@ export class EntryAnalyzer {
         }
         
         // If nothing found
+        // If nothing found
         const action = await vscode.window.showInformationMessage(
             'Vuex Helper: Could not find Vuex store entry automatically.', 
-            'Open Settings'
+            'Configure Path'
         );
-        if (action === 'Open Settings') {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'vuexHelper.storeEntry');
+        if (action === 'Configure Path') {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter the path to your Vuex store (e.g., src/store/index.js or @/store/index.js)',
+                placeHolder: 'src/store/index.js'
+            });
+            
+            if (input && input.trim()) {
+                const target = vscode.ConfigurationTarget.WorkspaceFolder;
+                await config.update('storeEntry', input, target);
+                vscode.window.showInformationMessage(`Vuex Helper: Store path configured to "${input}" in workspace settings.`);
+                // Trigger re-analysis is handled by file watcher or restart typically. 
+                // In extension.ts context, we might need to trigger indexer reload manually?
+                // But for now, just saving the config is helpful. The user might need to reload window or wait for config change event handler.
+            }
         }
 
         return null;
