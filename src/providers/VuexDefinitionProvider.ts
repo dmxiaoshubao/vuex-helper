@@ -19,24 +19,31 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const context = this.contextScanner.getContext(document, position);
         if (!context) return undefined;
 
+        // Helper to match item with namespace constraint
+        const matchItem = (item: { name: string, modulePath: string[] }) => {
+            if (context.namespace) {
+                return item.name === word && item.modulePath.join('/') === context.namespace;
+            }
+            // If no namespace arg, try full name match or leaf match
+            const fullName = [...item.modulePath, item.name].join('/');
+            return fullName === word || item.name === word;
+        };
+
         if (context.type === 'action') {
-            const action = this.storeIndexer.getAction(word);
+            const actions = this.storeIndexer.getStoreMap()?.actions;
+            const action = actions?.find(matchItem);
             if (action) return action.defLocation;
         } else if (context.type === 'mutation') {
-            const mutation = this.storeIndexer.getMutation(word);
+            const mutations = this.storeIndexer.getStoreMap()?.mutations;
+            const mutation = mutations?.find(matchItem);
             if (mutation) return mutation.defLocation;
         } else if (context.type === 'getter') {
              const getters = this.storeIndexer.getStoreMap()?.getters;
-             const getter = getters?.find(g => {
-                 const fullName = [...g.modulePath, g.name].join('/');
-                 return fullName === word || g.name === word;
-             });
+             const getter = getters?.find(matchItem);
              if (getter) return getter.defLocation;
         } else if (context.type === 'state') {
              const states = this.storeIndexer.getStoreMap()?.state;
-             const state = states?.find(s => {
-                 return s.name === word;
-             });
+             const state = states?.find(matchItem);
              if (state) return state.defLocation;
         }
         

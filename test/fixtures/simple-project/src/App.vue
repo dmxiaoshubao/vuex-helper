@@ -22,6 +22,11 @@ export default {
     // 2. mapState
     ...mapState(["count"]),
     ...mapState("user", ["name"]), // Namespaced
+    ...mapState("user", [
+      // 123
+      "name",
+      // 123
+    ]), // Namespaced
 
     // 3. mapGetters (assuming we add getters to store later)
     ...mapGetters(["doubleCount"]),

@@ -41,6 +41,47 @@ export class VuexHoverProvider implements vscode.HoverProvider {
                     md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(mutation.defLocation.uri)}**`);
                     return new vscode.Hover(md);
             }
+        } else if (context.type === 'state') {
+            // State lookup needs to consider namespace or just name matching
+            const states = this.storeIndexer.getStoreMap()?.state || [];
+            // Simple match: if any state has this name.
+            // Ideally we check namespace if available in context.
+            const state = states.find(s => {
+                if (context.namespace) {
+                     return s.name === word && s.modulePath.join('/') === context.namespace;
+                }
+                return s.name === word;
+            });
+            
+            if (state) {
+                const md = new vscode.MarkdownString();
+                md.appendCodeblock(`State: ${word}`, 'typescript');
+                if (state.documentation) {
+                     md.appendMarkdown(`\n\n${state.documentation}\n\n`);
+                }
+                md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(state.defLocation.uri)}**`);
+                return new vscode.Hover(md);
+            }
+        } else if (context.type === 'getter') {
+            const getters = this.storeIndexer.getStoreMap()?.getters || [];
+            const getter = getters.find(g => {
+                 const fullName = [...g.modulePath, g.name].join('/');
+                 if (context.namespace) {
+                     return g.name === word && g.modulePath.join('/') === context.namespace;
+                 }
+                 // If full name match or leaf name match (if unique?)
+                 return fullName === word || g.name === word;
+            });
+            
+            if (getter) {
+                 const md = new vscode.MarkdownString();
+                 md.appendCodeblock(`Getter: ${word}`, 'typescript');
+                 if (getter.documentation) {
+                     md.appendMarkdown(`\n\n${getter.documentation}\n\n`);
+                 }
+                 md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(getter.defLocation.uri)}**`);
+                 return new vscode.Hover(md);
+            }
         }
 
         return undefined;

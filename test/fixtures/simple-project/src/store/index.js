@@ -6,9 +6,11 @@ Vue.use(Vuex);
 
 export default new Vuex.Store({
   state: {
+    /** count */
     count: 0,
   },
   mutations: {
+    /** 增加 */
     increment(state) {
       state.count++;
     },
