@@ -195,7 +195,8 @@ export class StoreParser {
                             vscode.Uri.file(filePath),
                             new vscode.Position(p.key.loc.start.line - 1, p.key.loc.start.column)
                         ),
-                        modulePath: namespace
+                        modulePath: namespace,
+                        documentation: this.extractDocumentation(p)
                     });
                 }
             });
@@ -228,7 +229,8 @@ export class StoreParser {
                             vscode.Uri.file(filePath),
                             new vscode.Position(loc.start.line - 1, loc.start.column)
                         ),
-                        modulePath: namespace
+                        modulePath: namespace,
+                        documentation: this.extractDocumentation(p)
                     });
                 }
             });
@@ -258,7 +260,8 @@ export class StoreParser {
                             vscode.Uri.file(filePath),
                             new vscode.Position(loc.start.line - 1, loc.start.column)
                         ),
-                        modulePath: namespace
+                        modulePath: namespace,
+                        documentation: this.extractDocumentation(p)
                     });
                 }
             });
@@ -288,7 +291,8 @@ export class StoreParser {
                             vscode.Uri.file(filePath),
                             new vscode.Position(loc.start.line - 1, loc.start.column)
                         ),
-                        modulePath: namespace
+                        modulePath: namespace,
+                        documentation: this.extractDocumentation(p)
                     });
                 }
             });
@@ -321,5 +325,21 @@ export class StoreParser {
                 }
             }
         }
+    }
+    private extractDocumentation(node: any): string | undefined {
+        if (node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0) {
+            return node.leadingComments.map((comment: any) => {
+                // Remove the "/**" "*/" and "*"
+                let value = comment.value.trim();
+                // Simple stripping of * for JSDoc block comments
+                if (comment.type === 'CommentBlock') {
+                     value = value.replace(/^\*+/gm, '').replace(/\*+$/gm, '').trim(); // Remove leading/trailing * lines
+                     // also remove * at start of lines
+                     value = value.split('\n').map((line: string) => line.trim().replace(/^\*\s?/, '')).join('\n');
+                }
+                return value; 
+            }).join('\n\n');
+        }
+        return undefined;
     }
 }

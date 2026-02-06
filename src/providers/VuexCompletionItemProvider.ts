@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
+import { VuexContextScanner } from '../services/VuexContextScanner';
 
 export class VuexCompletionItemProvider implements vscode.CompletionItemProvider {
+    private contextScanner = new VuexContextScanner();
     constructor(private storeIndexer: StoreIndexer) {}
 
     public async provideCompletionItems(
@@ -11,39 +13,27 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | undefined> {
         
-        const lineText = document.lineAt(position).text;
-        const linePrefix = lineText.substring(0, position.character);
+        const vuexContext = this.contextScanner.getContext(document, position);
+        if (!vuexContext) return undefined;
 
-        // Check trigger character
-        // if user typed "dispatch('", we want action suggestions
-        
-        if (linePrefix.match(/dispatch\s*\(\s*['"]$/)) {
+        if (vuexContext.type === 'action') {
             const actions = this.storeIndexer.getStoreMap()?.actions || [];
             return actions.map(a => {
                 const fullName = [...a.modulePath, a.name].join('/');
                 const item = new vscode.CompletionItem(fullName, vscode.CompletionItemKind.Method);
                 item.detail = 'Vuex Action';
+                item.documentation = a.documentation || '';
                 return item;
             });
         }
 
-        if (linePrefix.match(/commit\s*\(\s*['"]$/)) {
+        if (vuexContext.type === 'mutation') {
             const mutations = this.storeIndexer.getStoreMap()?.mutations || [];
             return mutations.map(m => {
                 const fullName = [...m.modulePath, m.name].join('/');
                 const item = new vscode.CompletionItem(fullName, vscode.CompletionItemKind.Method);
                 item.detail = 'Vuex Mutation';
-                return item;
-            });
-        }
-        
-        // mapHelpers
-        // mapActions(['...'])
-        if (linePrefix.match(/mapActions\s*\(\s*\[.*['"]$/) || linePrefix.match(/mapActions\s*\(\s*\{.*['"]$/)) {
-             const actions = this.storeIndexer.getStoreMap()?.actions || [];
-            return actions.map(a => {
-                 const fullName = [...a.modulePath, a.name].join('/');
-                const item = new vscode.CompletionItem(fullName, vscode.CompletionItemKind.Method);
+                item.documentation = m.documentation || '';
                 return item;
             });
         }

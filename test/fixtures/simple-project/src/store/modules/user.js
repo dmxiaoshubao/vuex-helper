@@ -9,6 +9,7 @@ const mutations = {
 };
 
 const actions = {
+  /** 更新名称 */
   updateName({ commit }, name) {
     commit("SET_NAME", name);
   },

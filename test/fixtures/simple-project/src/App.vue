@@ -31,6 +31,15 @@ export default {
     // 4. mapMutations
     ...mapMutations(["increment"]),
     ...mapMutations("user", ["SET_NAME"]),
+    ...mapMutations("user", [
+      // 123
+      "SET_NAME",
+      // 123
+    ]),
+    ...mapMutations("user", { updateUserName: "SET_NAME" }),
+    ...mapMutations("user", {
+      updateUserName: "SET_NAME",
+    }),
 
     // 5. mapActions
     ...mapActions(["incrementAsync"]),

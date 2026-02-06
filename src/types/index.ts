@@ -4,24 +4,28 @@ export interface VuexStateInfo {
     name: string;
     defLocation: vscode.Location;
     modulePath: string[];
+    documentation?: string;
 }
 
 export interface VuexGetterInfo {
     name: string;
     defLocation: vscode.Location;
     modulePath: string[];
+    documentation?: string;
 }
 
 export interface VuexMutationInfo {
     name: string;
     defLocation: vscode.Location;
     modulePath: string[];
+    documentation?: string;
 }
 
 export interface VuexActionInfo {
     name: string;
     defLocation: vscode.Location;
     modulePath: string[];
+    documentation?: string;
 }
 
 export interface VuexStoreMap {
