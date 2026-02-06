@@ -27,6 +27,18 @@
 - **JSDoc 支持**: 提取并显示 Store 定义处的 `/** ... */` 注释文档。
 - **详细信息**: 显示类型（State/Mutation等）及定义所在的文件路径。
 
+### 4. 组件映射方法支持 (Component Mapped Methods)
+
+完整支持在组件中通过 `mapHelpers` 映射的方法的智能感知。
+
+- **代码补全**: 输入 `this.` 即可提示映射的方法（例如 `this.increment` 映射自 `...mapMutations(['increment'])`）。
+- **跳转定义**: 支持在 `this.methodName()` 上直接跳转到定义。
+- **悬浮提示**: 支持查看映射方法的 Store 文档。
+
+### 5. 类型推导 (Type Inference)
+
+- **State 类型**: 在悬浮提示中自动推导并显示 State 属性的类型 (例如 `(State) appName: string`)。
+
 ## 支持的语法示例
 
 - **辅助函数 (Helpers)**:
@@ -40,12 +52,10 @@
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
   ```
-- **多行书写支持**:
+- **组件方法**:
   ```javascript
-  ...mapMutations([
-    'INCREMENT',
-    'DECREMENT'
-  ])
+  this.increment(); // 映射自 mapMutations
+  this.appName; // 映射自 mapState
   ```
 
 ## 使用要求
@@ -61,11 +71,18 @@
   - 相对路径: `src/store/index.js`
   - 绝对路径: `/User/xxx/project/src/store/index.js`
 
-## 已知问题
-
-暂时仅支持静态分析，对于极其动态生成的模块可能支持有限。
-
 ## 更新日志
+
+### 0.1.0
+
+重要版本更新，大幅提升稳定性与功能：
+
+- **新增**: 支持组件内映射方法 (`this.method`) 的补全、跳转与悬浮。
+- **新增**: State 悬浮提示支持类型推导 (Type Inference)。
+- **新增**: 支持自定义 Store 入口路径 (`vuexHelper.storeEntry`)。
+- **优化**: `this.` 补全触发机制与优先级排序。
+- **优化**: AST 解析容错 (Error Recovery)，提升编码时的提示稳定性。
+- **修复**: 命名空间过滤与 JSDoc 提取的若干问题。
 
 ### 0.0.1
 
