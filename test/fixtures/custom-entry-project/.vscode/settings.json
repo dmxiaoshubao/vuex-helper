@@ -1,0 +1,4 @@
+{
+  "less.suppressNotice": true,
+  "vuexHelper.storeEntry": "@/my-store/store.js"
+}

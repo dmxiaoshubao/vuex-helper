@@ -1,0 +1,8 @@
+{
+  "name": "custom-entry-project",
+  "version": "1.0.0",
+  "dependencies": {
+    "vue": "^2.6.14",
+    "vuex": "^3.6.2"
+  }
+}

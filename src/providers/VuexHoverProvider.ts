@@ -1,10 +1,18 @@
 import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
+import { ComponentMapper } from '../services/ComponentMapper';
 
 export class VuexHoverProvider implements vscode.HoverProvider {
-    private contextScanner = new VuexContextScanner();
-    constructor(private storeIndexer: StoreIndexer) {}
+    private contextScanner: VuexContextScanner;
+    private componentMapper: ComponentMapper;
+    private storeIndexer: StoreIndexer;
+
+    constructor(storeIndexer: StoreIndexer) {
+        this.storeIndexer = storeIndexer;
+        this.contextScanner = new VuexContextScanner();
+        this.componentMapper = new ComponentMapper();
+    }
 
     public async provideHover(
         document: vscode.TextDocument,
@@ -15,75 +23,75 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const range = document.getWordRangeAtPosition(position);
         if (!range) return undefined;
         const word = document.getText(range);
-        const lineText = document.lineAt(position).text;
+        
+        // 1. Vuex Context (String literals)
         const context = this.contextScanner.getContext(document, position);
-        if (!context) return undefined;
-
-        if (context.type === 'action') {
-            const action = this.storeIndexer.getAction(word);
-            if (action) {
-                    const md = new vscode.MarkdownString();
-                    md.appendCodeblock(`Action: ${word}`, 'typescript');
-                    if (action.documentation) {
-                        md.appendMarkdown(`\n\n${action.documentation}\n\n`);
-                    }
-                    md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(action.defLocation.uri)}**`);
-                    return new vscode.Hover(md);
-            }
-        } else if (context.type === 'mutation') {
-            const mutation = this.storeIndexer.getMutation(word);
-            if (mutation) {
-                    const md = new vscode.MarkdownString();
-                    md.appendCodeblock(`Mutation: ${word}`, 'typescript');
-                    if (mutation.documentation) {
-                        md.appendMarkdown(`\n\n${mutation.documentation}\n\n`);
-                    }
-                    md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(mutation.defLocation.uri)}**`);
-                    return new vscode.Hover(md);
-            }
-        } else if (context.type === 'state') {
-            // State lookup needs to consider namespace or just name matching
-            const states = this.storeIndexer.getStoreMap()?.state || [];
-            // Simple match: if any state has this name.
-            // Ideally we check namespace if available in context.
-            const state = states.find(s => {
-                if (context.namespace) {
-                     return s.name === word && s.modulePath.join('/') === context.namespace;
-                }
-                return s.name === word;
-            });
-            
-            if (state) {
-                const md = new vscode.MarkdownString();
-                md.appendCodeblock(`State: ${word}`, 'typescript');
-                if (state.documentation) {
-                     md.appendMarkdown(`\n\n${state.documentation}\n\n`);
-                }
-                md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(state.defLocation.uri)}**`);
-                return new vscode.Hover(md);
-            }
-        } else if (context.type === 'getter') {
-            const getters = this.storeIndexer.getStoreMap()?.getters || [];
-            const getter = getters.find(g => {
-                 const fullName = [...g.modulePath, g.name].join('/');
-                 if (context.namespace) {
-                     return g.name === word && g.modulePath.join('/') === context.namespace;
-                 }
-                 // If full name match or leaf name match (if unique?)
-                 return fullName === word || g.name === word;
-            });
-            
-            if (getter) {
-                 const md = new vscode.MarkdownString();
-                 md.appendCodeblock(`Getter: ${word}`, 'typescript');
-                 if (getter.documentation) {
-                     md.appendMarkdown(`\n\n${getter.documentation}\n\n`);
-                 }
-                 md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(getter.defLocation.uri)}**`);
-                 return new vscode.Hover(md);
-            }
+        if (context) {
+            if (context.type === 'state') return this.findHover(word, 'state', context.namespace);
+            if (context.type === 'getter') return this.findHover(word, 'getter', context.namespace);
+            if (context.type === 'mutation') return this.findHover(word, 'mutation', context.namespace);
+            if (context.type === 'action') return this.findHover(word, 'action', context.namespace);
         }
 
+        // 2. Component Mapping (this.methodName)
+        const lineText = document.lineAt(position.line).text;
+        const prefix = lineText.substring(0, range.start.character).trimEnd();
+        
+        // Reuse simplest property access check
+        const mapping = this.componentMapper.getMapping(document);
+        const mappedItem = mapping[word];
+        
+        if (mappedItem) {
+            return this.findHover(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
+        }
+
+        return undefined;
+    }
+
+    private findHover(name: string, type: 'state' | 'getter' | 'mutation' | 'action', namespace?: string): vscode.Hover | undefined {
+        const storeMap = this.storeIndexer.getStoreMap();
+        if (!storeMap) return undefined;
+
+         const matchItem = (item: { name: string, modulePath: string[] }) => {
+            if (namespace) {
+                return item.name === name && item.modulePath.join('/') === namespace;
+            } else {
+                if (name.includes('/')) {
+                    const parts = name.split('/');
+                    const realName = parts.pop()!;
+                    const namespaceStr = parts.join('/');
+                    return item.name === realName && item.modulePath.join('/') === namespaceStr;
+                }
+                return item.name === name;
+            }
+        };
+
+        let result: { defLocation: vscode.Location, documentation?: string } | undefined;
+        let labelPrefix = '';
+
+        if (type === 'action') {
+            result = storeMap.actions.find(matchItem);
+            labelPrefix = 'Action';
+        } else if (type === 'mutation') {
+            result = storeMap.mutations.find(matchItem);
+            labelPrefix = 'Mutation';
+        } else if (type === 'state') {
+            result = storeMap.state.find(matchItem);
+            labelPrefix = 'State';
+        } else if (type === 'getter') {
+            result = storeMap.getters.find(matchItem);
+            labelPrefix = 'Getter';
+        }
+
+        if (result) {
+            const md = new vscode.MarkdownString();
+            md.appendCodeblock(`${labelPrefix}: ${name}`, 'typescript');
+            if (result.documentation) {
+                md.appendMarkdown(`\n\n${result.documentation}\n\n`);
+            }
+            md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(result.defLocation.uri)}**`);
+            return new vscode.Hover(md);
+        }
         return undefined;
     }
 }
