@@ -9,6 +9,7 @@
     "strict": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
     "esModuleInterop": true
   },
   "exclude": ["node_modules", ".vscode-test"]
