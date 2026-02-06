@@ -352,7 +352,7 @@ export class StoreParser {
                     const trimmed = line.trim();
                     // Remove leading * and optional space
                     return trimmed.replace(/^\*\s?/, '');
-                }).join('\n').trim();
+                }).join('  \n').trim(); // Use double space + newline for Markdown hard break
             }).join('\n\n');
         }
         return undefined;
