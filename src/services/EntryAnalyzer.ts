@@ -86,12 +86,18 @@ export class EntryAnalyzer {
             });
             
             if (input && input.trim()) {
-                const target = vscode.ConfigurationTarget.WorkspaceFolder;
-                await config.update('storeEntry', input, target);
-                vscode.window.showInformationMessage(`Vuex Helper: Store path configured to "${input}" in workspace settings.`);
-                // Trigger re-analysis is handled by file watcher or restart typically. 
-                // In extension.ts context, we might need to trigger indexer reload manually?
-                // But for now, just saving the config is helpful. The user might need to reload window or wait for config change event handler.
+                try {
+                    // Update configuration for the specific workspace folder
+                    const targetUri = vscode.Uri.file(this.workspaceRoot);
+                    const config = vscode.workspace.getConfiguration('vuexHelper', targetUri);
+                    
+                    // Force update to WorkspaceFolder level
+                    await config.update('storeEntry', input, vscode.ConfigurationTarget.WorkspaceFolder);
+                    
+                    vscode.window.showInformationMessage(`Vuex Helper: Store path configured to "${input}".`);
+                } catch (e) {
+                    vscode.window.showErrorMessage(`Vuex Helper: Failed to save setting. ${e}`);
+                }
             }
         }
 
