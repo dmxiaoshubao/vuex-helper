@@ -19,6 +19,48 @@ export class EntryAnalyzer {
      * Find the main entry file and the store path.
      */
     public async analyze(): Promise<string | null> {
+        // 0. Check for configuration "vuexHelper.storeEntry"
+        const config = vscode.workspace.getConfiguration('vuexHelper');
+        const configuredEntry = config.get<string>('storeEntry');
+
+        if (configuredEntry && configuredEntry.trim() !== '') {
+            // Resolve configured path
+            // It could be:
+            // 1. Alias: "@/store/index.js"
+            // 2. Relative: "./str/store.js" or "src/store.js"
+            // 3. Absolute: "/Users/..."
+            
+            // PathResolver can handle aliases and general paths if we give it a context.
+            // But resolve(path, contextFile) assumes contextFile for relative lookups logic?
+            // Actually PathResolver.resolve checks for startWith('.') for relative.
+            
+            let resolvedPath: string | null = null;
+            
+            // If absolute
+            if (path.isAbsolute(configuredEntry)) {
+                 if (fs.existsSync(configuredEntry)) resolvedPath = configuredEntry;
+            } else {
+                 // Try alias first
+                 resolvedPath = this.pathResolver.resolve(configuredEntry, path.join(this.workspaceRoot, 'package.json')); // Dummy context
+                 
+                 // If not alias, try workspace relative
+                 if (!resolvedPath) {
+                     const abs = path.resolve(this.workspaceRoot, configuredEntry);
+                     if (fs.existsSync(abs)) resolvedPath = abs;
+                 }
+            }
+            
+            if (resolvedPath && fs.existsSync(resolvedPath)) {
+                console.log(`Using configured store entry: ${resolvedPath}`);
+                return resolvedPath;
+            } else {
+                vscode.window.showWarningMessage(`Vuex Helper: Configured store entry "${configuredEntry}" not found.`);
+                // Fallback to auto-detection? Or stop? 
+                // Usually if user configures it, they want that. But if it fails, maybe fallback is better than nothing.
+                // But let's fallback to auto-detection with a warning.
+            }
+        }
+
         // 1. Find potential entry files
         const entryFiles = await this.findEntryFiles();
         
@@ -31,6 +73,15 @@ export class EntryAnalyzer {
             }
         }
         
+        // If nothing found
+        const action = await vscode.window.showInformationMessage(
+            'Vuex Helper: Could not find Vuex store entry automatically.', 
+            'Open Settings'
+        );
+        if (action === 'Open Settings') {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'vuexHelper.storeEntry');
+        }
+
         return null;
     }
 

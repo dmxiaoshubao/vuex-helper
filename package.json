@@ -30,6 +30,12 @@
           ],
           "default": "off",
           "description": "Traces the communication between VS Code and the language server."
+        },
+        "vuexHelper.storeEntry": {
+          "scope": "resource",
+          "type": "string",
+          "default": "",
+          "description": "Path to the Vuex store entry file. Supports absolute paths, relative to workspace root (start with ./ or just path), or aliases (e.g. '@/store/index.js'). If empty, auto-detection attempts to find the store."
         }
       }
     }

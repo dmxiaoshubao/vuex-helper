@@ -30,7 +30,16 @@ export default {
 
     // 3. mapGetters (assuming we add getters to store later)
     ...mapGetters(["doubleCount"]),
+    ...mapGetters({
+      upperName: "user/upperName",
+    }),
     ...mapGetters("user", ["upperName"]),
+    ...mapGetters("user", ["upperName"]),
+    ...mapGetters("user", [
+      // 123
+      "upperName",
+      // 123
+    ]),
   },
   methods: {
     // 4. mapMutations
