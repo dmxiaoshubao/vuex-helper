@@ -1,6 +1,6 @@
 # Vuex Helper
 
-[中文文档](./README.zh-CN.md)
+[中文文档](./docs/README.zh-CN.md)
 
 VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, and **Hover Information** for State, Getters, Mutations, and Actions.
 
