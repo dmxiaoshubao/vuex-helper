@@ -12,7 +12,7 @@ Jump directly to the definition of Vuex store properties from your components.
 
 #### Demo: Jump to Definition
 
-![Jump to Definition](images/jump_definition.gif)
+#### ![Jump to Definition](images/jump_definition.gif)
 
 - **Support**: `this.$store.state/getters/commit/dispatch`
 - **Map Helpers**: `mapState`, `mapGetters`, `mapMutations`, `mapActions`
@@ -24,8 +24,9 @@ Intelligent suggestions for Vuex keys and mapped methods.
 
 #### Demo: Context-Aware Completion
 
-![Code Completion (Variables)](images/auto_tips_and_complete_for_var.gif)
-![Code Completion (Functions)](images/auto_tips_and_complete_for_func.gif)
+#### ![Code Completion (Variables)](images/auto_tips_and_complete_for_var.gif)
+
+#### ![Code Completion (Functions)](images/auto_tips_and_complete_for_func.gif)
 
 - **Context Aware**: Suggests actions for `dispatch`, mutations for `commit`, etc.
 - **Namespace Filtering**: When using `mapState('user', [...])`, it correctly filters and shows only items from the `user` module.
@@ -38,7 +39,7 @@ View JSDoc documentation, details, and inferred types without leaving your code.
 
 #### Demo: Hover Documentation
 
-![Hover Info](images/hover_info_and_type_inference.gif)
+#### ![Hover Info](images/hover_info_and_type_inference.gif)
 
 - **JSDoc Support**: Displays comments written in `/** ... */` format from your store definitions.
 - **Type Inference**: Automatically infers and displays the type of State properties in hover tooltips (e.g., `(State) appName: string`).

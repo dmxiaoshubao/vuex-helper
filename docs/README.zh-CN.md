@@ -10,7 +10,7 @@
 
 #### 演示：跳转定义
 
-![Jump to Definition](../images/jump_definition.gif)
+#### ![Jump to Definition](../images/jump_definition.gif)
 
 - **支持**: `this.$store.state/getters/commit/dispatch`
 - **Map 辅助函数**: `mapState`, `mapGetters`, `mapMutations`, `mapActions`
@@ -22,8 +22,9 @@
 
 #### 演示：智能补全
 
-![Code Completion (Variables)](../images/auto_tips_and_complete_for_var.gif)
-![Code Completion (Functions)](../images/auto_tips_and_complete_for_func.gif)
+#### ![Code Completion (Variables)](../images/auto_tips_and_complete_for_var.gif)
+
+#### ![Code Completion (Functions)](../images/auto_tips_and_complete_for_func.gif)
 
 - **上下文感知**: 在 `dispatch` 中提示 Actions，在 `commit` 中提示 Mutations。
 - **命名空间过滤**: 当使用 `mapState('user', [...])` 时，会自动过滤并仅显示 `user` 模块下的内容。
@@ -36,7 +37,7 @@
 
 #### 演示：悬浮文档
 
-![Hover Info](../images/hover_info_and_type_inference.gif)
+#### ![Hover Info](../images/hover_info_and_type_inference.gif)
 
 - **JSDoc 支持**: 提取并显示 Store 定义处的 `/** ... */` 注释文档。
 - **State 类型**: 在悬浮提示中自动推导并显示 State 属性的类型 (例如 `(State) appName: string`)。
@@ -49,7 +50,7 @@
 
 #### 演示：Store 内部 代码补全、跳转、悬浮提示
 
-![Internal Usage](../images/internal_usage.gif)
+#### ![Internal Usage](../images/internal_usage.gif)
 
 - **模块作用域**: 当在模块文件（如 `user.js`）中编写 Action 时，`commit` 和 `dispatch` 的代码补全会自动过滤并仅显示当前模块的内容。
 
