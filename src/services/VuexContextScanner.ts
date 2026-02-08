@@ -6,6 +6,8 @@ export interface VuexContext {
     type: VuexContextType;
     method: 'mapHelper' | 'dispatch' | 'commit' | 'access'; // 'access' for this.$store.state.xxx
     namespace?: string;
+    argumentIndex?: number; // 0-based index of the argument we are in
+    isNested?: boolean; // true if we are inside [ ] or { } within the function call
 }
 
 export class VuexContextScanner {
@@ -68,7 +70,13 @@ export class VuexContextScanner {
     private analyzeTokens(tokens: { type: string, value: string }[]): VuexContext | undefined {
         // Stack to track brackets/parentheses and what precedes them
         // We also want to track arguments 'accumulated' inside the current parentheses scope
-        const outputStack: { token: string, index: number, precedingWord: string, extractedArgs: string[] }[] = [];
+        const outputStack: { 
+            token: string, 
+            index: number, 
+            precedingWord: string, 
+            extractedArgs: string[], 
+            argIndex: number // Track current argument index (comma count)
+        }[] = [];
         
         let prevWord = '';
         
@@ -81,7 +89,8 @@ export class VuexContextScanner {
                         token: token.value, 
                         index: i, 
                         precedingWord: prevWord,
-                        extractedArgs: [] 
+                        extractedArgs: [],
+                        argIndex: 0
                     });
                     prevWord = '';
                 } else if ([')', '}', ']'].includes(token.value)) {
@@ -96,9 +105,10 @@ export class VuexContextScanner {
                     }
                     prevWord = '';
                 } else if (token.value === ',') {
-                     // Comma separates arguments. 
-                     // We don't strictly need to track commas unless we want to know WHICH arg index we are at.
-                     // But for namespace extraction, we just grab all strings seen so far at this level.
+                     // Comma increments argument index for the current scope
+                     if (outputStack.length > 0) {
+                         outputStack[outputStack.length - 1].argIndex++;
+                     }
                      prevWord = '';
                 }
             } else if (token.type === 'string') {
@@ -119,6 +129,9 @@ export class VuexContextScanner {
         // Now, look at the stack to find the immediate Vuex context.
         // We traverse from innermost (top of stack) to outwards.
         
+        // nestingLevel: 0 means we are directly in the function. > 0 means we are in [ or {
+        let nestingLevel = 0;
+
         for (let i = outputStack.length - 1; i >= 0; i--) {
             const frame = outputStack[i];
             
@@ -126,16 +139,7 @@ export class VuexContextScanner {
                 const func = frame.precedingWord;
                 let namespace: string | undefined = undefined;
                 
-                // Identify namespace if present
-                // Typically mapState('namespace', [...])
-                // The frame.extractedArgs contains all strings encountered *directly* in this scope BEFORE the cursor.
-                // If use wrote mapState('ns', [ ... cursor ... ]), the scanner sees 'ns' then '[' then cursor is inside brackets.
-                // So the PARENT frame (the mapState call) will have 'ns' in its extractedArgs.
-                // But wait, the loop above processes tokens *linearly*.
-                // If we entered '[', we pushed a new frame.
-                // The `extractedArgs` of the PARENT frame (mapState) *already* captured 'ns' before pushing '[' ?
-                // YES, because 'ns' appeared before '['.
-                
+                // Identify namespace if present (if we are at argIndex >= 1)
                 if (frame.extractedArgs.length > 0) {
                     const firstArg = frame.extractedArgs[0];
                     // Strip quotes
@@ -144,14 +148,46 @@ export class VuexContextScanner {
                     }
                 }
                 
-                if (func === 'mapState') return { type: 'state', method: 'mapHelper', namespace };
-                if (func === 'mapGetters') return { type: 'getter', method: 'mapHelper', namespace };
-                if (func === 'mapMutations') return { type: 'mutation', method: 'mapHelper', namespace };
-                if (func === 'mapActions') return { type: 'action', method: 'mapHelper', namespace };
-                
-                if (func === 'commit') return { type: 'mutation', method: 'commit', namespace }; // commit('ns/mut') is one string, not separate args usually.
-                if (func === 'dispatch') return { type: 'action', method: 'dispatch', namespace };
+                // If we are in the first argument (argIndex 0), namespace is not yet established from arguments
+                // (unless we are editing it right now, which is handled by provider logic using direct string match)
+                if (frame.argIndex === 0) {
+                    namespace = undefined;
+                }
+
+                if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(func)) {
+                    let type: VuexContextType = 'unknown';
+                    if (func === 'mapState') type = 'state';
+                    if (func === 'mapGetters') type = 'getter';
+                    if (func === 'mapMutations') type = 'mutation';
+                    if (func === 'mapActions') type = 'action';
+                    
+                    return { 
+                        type, 
+                        method: 'mapHelper', 
+                        namespace,
+                        argumentIndex: frame.argIndex,
+                        isNested: nestingLevel > 0 
+                    };
+                }
+
+                if (['commit', 'dispatch'].includes(func)) {
+                    let type: VuexContextType = 'unknown';
+                     if (func === 'commit') type = 'mutation';
+                     if (func === 'dispatch') type = 'action';
+
+                     return { 
+                         type, 
+                         method: func as any, 
+                         namespace, // Usually commit('ns/module')
+                         argumentIndex: frame.argIndex,
+                         isNested: nestingLevel > 0
+                     };
+                }
             }
+            
+            // If we didn't return, we are going up the stack. 
+            // The current frame (e.g. '[') contributes to nesting for the *next* iteration (parent).
+            nestingLevel++;
         }
         
         return undefined;
