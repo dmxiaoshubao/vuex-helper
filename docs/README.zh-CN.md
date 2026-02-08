@@ -8,36 +8,52 @@
 
 从组件中直接跳转到 Vuex Store 的定义处。
 
+#### 演示：跳转定义
+
+![Jump to Definition](../images/jump_definition.gif)
+
 - **支持**: `this.$store.state/getters/commit/dispatch`
 - **Map 辅助函数**: `mapState`, `mapGetters`, `mapMutations`, `mapActions`
 - **命名空间**: 完美支持 Namespaced 模块及其嵌套。
 
-### 2. 代码补全 (IntelliSense)
+### 2. 智能代码补全 (Intelligent Code Completion)
 
-智能提示 Vuex 的各种 Key。
+智能提示 Vuex 的各种 Key 以及组件中映射的方法。
+
+#### 演示：智能补全
+
+![Code Completion (Variables)](../images/auto_tips_and_complete_for_var.gif)
+![Code Completion (Functions)](../images/auto_tips_and_complete_for_func.gif)
 
 - **上下文感知**: 在 `dispatch` 中提示 Actions，在 `commit` 中提示 Mutations。
 - **命名空间过滤**: 当使用 `mapState('user', [...])` 时，会自动过滤并仅显示 `user` 模块下的内容。
+- **组件映射方法**: 输入 `this.` 即可提示映射的方法（例如 `this.increment` 映射自 `...mapMutations(['increment'])`）。
 - **语法支持**: 支持数组语法和对象别名语法 (例如 `...mapActions({ alias: 'name' })`)。
 
-### 3. 悬浮提示 (Hover Information)
+### 3. 悬浮提示与类型推导 (Hover Information & Type Inference)
 
-无需跳转即可查看文档和详情。
+无需跳转即可查看文档、类型详情。
+
+#### 演示：悬浮文档
+
+![Hover Info](../images/hover_info_and_type_inference.gif)
 
 - **JSDoc 支持**: 提取并显示 Store 定义处的 `/** ... */` 注释文档。
-- **详细信息**: 显示类型（State/Mutation等）及定义所在的文件路径。
-
-### 4. 组件映射方法支持 (Component Mapped Methods)
-
-完整支持在组件中通过 `mapHelpers` 映射的方法的智能感知。
-
-- **代码补全**: 输入 `this.` 即可提示映射的方法（例如 `this.increment` 映射自 `...mapMutations(['increment'])`）。
-- **跳转定义**: 支持在 `this.methodName()` 上直接跳转到定义。
-- **悬浮提示**: 支持查看映射方法的 Store 文档。
-
-### 5. 类型推导 (Type Inference)
-
 - **State 类型**: 在悬浮提示中自动推导并显示 State 属性的类型 (例如 `(State) appName: string`)。
+- **详细信息**: 显示类型（State/Mutation等）及定义所在的文件路径。
+- **映射方法**: 支持查看映射方法的 Store 文档。
+
+### 4. Store 内部调用 (Store Internal Usage)
+
+同样支持在 Vuex Store 内部 代码补全、跳转、悬浮提示。
+
+#### 演示：Store 内部 代码补全、跳转、悬浮提示
+
+![Internal Usage](../images/internal_usage.gif)
+
+- **模块作用域**: 当在模块文件（如 `user.js`）中编写 Action 时，`commit` 和 `dispatch` 的代码补全会自动过滤并仅显示当前模块的内容。
+
+同样支持在 Vuex Store 内部 代码补全、跳转、悬浮提示。
 
 ## 支持的语法示例
 
@@ -46,6 +62,7 @@
   ...mapState(['count'])
   ...mapState('user', ['name']) // 命名空间支持
   ...mapActions({ add: 'increment' }) // 对象别名支持
+  ...mapActions(['add/increment'])
   ```
 - **Store 方法**:
   ```javascript

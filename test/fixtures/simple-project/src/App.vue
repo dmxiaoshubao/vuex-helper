@@ -1,10 +1,37 @@
 <template>
   <div id="app">
-    <p>Count: {{ count }}</p>
-    <p>Name: {{ name }}</p>
-    <button @click="increment">Increment</button>
-    <button @click="incrementAsync">Increment Async</button>
-    <button @click="updateName('Jane Doe')">Update Name</button>
+    <h1>Vuex Helper Examples</h1>
+
+    <section>
+      <h2>Root Store</h2>
+      <p>Count: {{ count }}</p>
+      <p>Is Logged In: {{ isLoggedIn }}</p>
+      <p>Preferences: {{ preferences }}</p>
+      <button @click="increment">Increment</button>
+      <button @click="incrementAsync">Increment Async</button>
+      <button @click="login({ username: 'user', password: 'password' })">
+        Login
+      </button>
+      <button @click="updatePreferences({ theme: 'light' })">
+        Set Light Theme
+      </button>
+    </section>
+
+    <section>
+      <h2>User Module (Namespaced)</h2>
+      <p>Name: {{ name }} (Upper: {{ upperName }})</p>
+      <p>Age: {{ userAge }}</p>
+      <p>Is Admin: {{ isAdmin }}</p>
+      <p>Is Active: {{ isActive }}</p>
+
+      <div v-if="hasRole('admin')">Admin Area</div>
+
+      <button @click="updateName('Jane Doe')">Update Name</button>
+      <button @click="fetchProfile">Fetch Profile</button>
+      <button @click="toggleActive">Toggle Active</button>
+      <button @click="logout">Logout</button>
+      <button @click="addRole('admin')">Add Admin Role</button>
+    </section>
   </div>
 </template>
 
@@ -14,58 +41,98 @@ import { mapState, mapGetters, mapMutations, mapActions } from "vuex";
 export default {
   name: "App",
   computed: {
-    // 1. Direct access check (not yet supported by current provider logic, but good for future)
-    directCount() {
-      return this.$store.state.count;
-    },
+    // --- Root State ---
+    ...mapState(["count", "isLoggedIn", "preferences", "items"]),
 
-    // 2. mapState
-    ...mapState(["count"]),
-    ...mapState("user", ["name"]), // Namespaced
-    ...mapState("user", [
-      // 123
-      "name",
-      // 123
-    ]), // Namespaced
+    ...mapState("user", ["age", "name", "preferences"]),
+    ...mapGetters("others", ["isAdmin", ""]),
 
-    // 3. mapGetters (assuming we add getters to store later)
-    ...mapGetters(["doubleCount"]),
-    ...mapGetters({
-      upperName: "user/upperName",
+    ...mapState("user", {
+      age: "age",
     }),
-    ...mapGetters("user", ["upperName"]),
-    ...mapGetters("user", ["upperName"]),
-    ...mapGetters("user", [
-      // 123
-      "upperName",
-      // 123
-    ]),
+
+    ...mapGetters(["others/hasRole", "others/isAdmin"]),
+
+    // --- User Module State ---
+    ...mapState("user", ["name", "age", "roles", "isActive"]),
+
+    // --- Root Getters ---
+    ...mapGetters(["isLoggedIn", "getItemById"]),
+
+    // --- User Module Getters ---
+    ...mapGetters("user", ["upperName", "userAge", "hasRole", "isAdmin"]),
+
+    // Direct Access Examples (for testing hover/jump)
+    directStoreAccess() {
+      // Root
+      console.log(this.$store.state.count);
+      console.log(this.$store.getters.isLoggedIn);
+
+      // Module
+      console.log(this.$store.state.user.name);
+      console.log(this.$store.getters["user/upperName"]);
+    },
+  },
+  created() {
+    this.name;
+    this.upperName;
   },
   methods: {
-    // 4. mapMutations
-    ...mapMutations(["increment"]),
-    ...mapMutations("user", ["SET_NAME"]),
-    ...mapMutations("user", [
-      // 123
-      "SET_NAME",
-      // 123
+    // --- Root Mutations ---
+    ...mapMutations([
+      "increment",
+      "SET_LOGIN_STATUS",
+      "UPDATE_PREFERENCES",
+      "addItem",
     ]),
-    ...mapMutations("user", { updateUserName: "SET_NAME" }),
+
+    // --- User Module Mutations ---
+    ...mapMutations("user", [
+      "SET_NAME",
+      "SET_AGE",
+      "ADD_ROLE",
+      "toggleActive",
+      "SET_PROFILE",
+    ]),
+    // Alias example
     ...mapMutations("user", {
-      updateUserName: "SET_NAME",
+      addRole: "ADD_ROLE",
     }),
 
-    // 5. mapActions
-    ...mapActions(["incrementAsync"]),
-    ...mapActions("user", ["updateName"]),
+    // --- Root Actions ---
+    ...mapActions(["incrementAsync", "login", "updatePreferences"]),
+    ...mapMutations(["others/ADD_ROLE", "others/SET_AGE"]),
 
-    testDirectCall() {
-      // 6. Direct dispatch/commit
+    // --- User Module Actions ---
+    ...mapActions("user", [
+      "updateName",
+      "updateInfoAsync",
+      "fetchProfile",
+      "logout",
+    ]),
+    ...mapMutations(["others/ADD_ROLE"]),
+
+    // Standard method to test direct dispatch/commit
+    testDirectCalls() {
+      // Root
       this.$store.commit("increment");
       this.$store.dispatch("incrementAsync");
 
-      this.$store.commit("user/SET_NAME", "Bob");
-      this.$store.dispatch("user/updateName", "Alice");
+      // Module
+      this.$store.commit("user/SET_NAME", "Direct Name");
+      this.$store.dispatch("user/updateName", "Direct Action");
+    },
+
+    testBracketNotation() {
+      // Should autocomplete to: this['others/ADD_ROLE']()
+      // this.ot... ->
+      this["others/ADD_ROLE"]("admin");
+
+      // Should autocomplete to: this['others/SET_AGE']()
+      this["others/SET_AGE"](30);
+
+      // Should autocomplete to: this['others/isAdmin']
+      console.log(this["others/isAdmin"]);
     },
   },
 };
