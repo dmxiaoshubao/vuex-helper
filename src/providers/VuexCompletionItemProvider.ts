@@ -284,10 +284,129 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             return new vscode.CompletionList(results, false);
         }
 
-        // 2. In-Module State Completion (state.xxx)
+        // 2. this.$store.state. or this.$store.getters. completion
         const lineText = document.lineAt(position.line).text;
         const prefix = lineText.substring(0, position.character);
 
+        // Match this.$store.state.xxx or this.$store.getters.xxx
+        const storePropertyMatch = prefix.match(/(?:this|vm)\.\$store\.(state|getters)\.([a-zA-Z0-9_$/]*)$/);
+
+        if (storePropertyMatch) {
+            const propertyType = storePropertyMatch[1]; // 'state' or 'getters'
+            const partialInput = storePropertyMatch[2]; // e.g., "use" or "user/log" or ""
+
+            const items: vscode.CompletionItem[] = [];
+
+            // Get the appropriate store items
+            const storeItems = propertyType === 'state' ? storeMap.state : storeMap.getters;
+
+            storeItems.forEach((item: any) => {
+                const fullPath = item.modulePath.length > 0
+                    ? `${item.modulePath.join('/')}/${item.name}`
+                    : item.name;
+
+                const completionItem = new vscode.CompletionItem(
+                    fullPath,
+                    propertyType === 'state' ? vscode.CompletionItemKind.Field : vscode.CompletionItemKind.Property
+                );
+
+                completionItem.detail = `[Vuex Store] ${propertyType}`;
+                completionItem.sortText = `\u0000${fullPath}`;
+                completionItem.preselect = true;
+
+                if (item.documentation) {
+                    completionItem.documentation = new vscode.MarkdownString(item.documentation);
+                }
+
+                // If the path contains '/', use bracket notation and remove the preceding dot
+                if (fullPath.includes('/')) {
+                    // 扩展替换范围以包含前面的点号
+                    const bracketReplacementRange = new vscode.Range(
+                        position.line,
+                        position.character - partialInput.length - 1, // -1 to include the dot
+                        position.line,
+                        position.character
+                    );
+                    completionItem.range = bracketReplacementRange;
+                    completionItem.insertText = `['${fullPath}']`;
+                    // 设置 filterText 以确保在输入 "." 时也能显示
+                    // 例如：用户输入 "."，filterText 为 ".user/name"，这样 VS Code 就能匹配到
+                    completionItem.filterText = '.' + partialInput + fullPath;
+                } else {
+                    // 普通属性访问，只替换部分输入
+                    const replacementRange = new vscode.Range(
+                        position.line,
+                        position.character - partialInput.length,
+                        position.line,
+                        position.character
+                    );
+                    completionItem.range = replacementRange;
+                    completionItem.insertText = fullPath;
+                }
+
+                items.push(completionItem);
+            });
+
+            return new vscode.CompletionList(items, false);
+        }
+
+        // 3. this.$store. completion (state, getters, commit, dispatch)
+        const storeMatch = prefix.match(/(?:this|vm)\.\$store\.([a-zA-Z0-9_$]*)$/);
+
+        if (storeMatch) {
+            const partialInput = storeMatch[1]; // e.g., "d" or "dis" or ""
+            const items: vscode.CompletionItem[] = [];
+
+            // Calculate replacement range to cover the partial input
+            const replacementRange = new vscode.Range(
+                position.line,
+                position.character - partialInput.length,
+                position.line,
+                position.character
+            );
+
+            // state
+            const stateItem = new vscode.CompletionItem('state', vscode.CompletionItemKind.Property);
+            stateItem.detail = '[Vuex Store] Access state';
+            stateItem.documentation = new vscode.MarkdownString('Access the Vuex store state tree');
+            stateItem.sortText = '\u0000state';
+            stateItem.preselect = true;
+            stateItem.range = replacementRange;
+            items.push(stateItem);
+
+            // getters
+            const gettersItem = new vscode.CompletionItem('getters', vscode.CompletionItemKind.Property);
+            gettersItem.detail = '[Vuex Store] Access getters';
+            gettersItem.documentation = new vscode.MarkdownString('Access the Vuex store getters');
+            gettersItem.sortText = '\u0000getters';
+            gettersItem.preselect = true;
+            gettersItem.range = replacementRange;
+            items.push(gettersItem);
+
+            // commit
+            const commitItem = new vscode.CompletionItem('commit', vscode.CompletionItemKind.Method);
+            commitItem.detail = '[Vuex Store] Commit mutation';
+            commitItem.documentation = new vscode.MarkdownString('Commit a mutation to the Vuex store');
+            commitItem.insertText = new vscode.SnippetString('commit($0)');
+            commitItem.sortText = '\u0000commit';
+            commitItem.preselect = true;
+            commitItem.range = replacementRange;
+            items.push(commitItem);
+
+            // dispatch
+            const dispatchItem = new vscode.CompletionItem('dispatch', vscode.CompletionItemKind.Method);
+            dispatchItem.detail = '[Vuex Store] Dispatch action';
+            dispatchItem.documentation = new vscode.MarkdownString('Dispatch an action to the Vuex store');
+            dispatchItem.insertText = new vscode.SnippetString('dispatch($0)');
+            dispatchItem.sortText = '\u0000dispatch';
+            dispatchItem.preselect = true;
+            dispatchItem.range = replacementRange;
+            items.push(dispatchItem);
+
+            return new vscode.CompletionList(items, false);
+        }
+
+        // 3. In-Module State Completion (state.xxx)
         if (currentNamespace && /\bstate\.$/.test(prefix)) {
             const nsJoined = currentNamespace.join('/');
             const items = storeMap.state.filter(s => s.modulePath.join('/') === nsJoined);
@@ -309,7 +428,8 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
 
             return new vscode.CompletionList(completionItems, false);
         }
-        
+
+        // 4. this.xxx or vm.xxx completion (mapped properties)
         const match = prefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
         
         if (match) {
