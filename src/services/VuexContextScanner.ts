@@ -12,7 +12,7 @@ export interface VuexContext {
 }
 
 export class VuexContextScanner {
-    
+
     /**
      * Determines the Vuex context at the given position.
      * Scans backwards to find if we are inside matchers like mapState([...]), this.$store.commit(...), etc.
@@ -20,41 +20,61 @@ export class VuexContextScanner {
     public getContext(document: vscode.TextDocument, position: vscode.Position): VuexContext | undefined {
         const offset = document.offsetAt(position);
         const text = document.getText();
-        
-        // Safety check limit (look back max 2000 chars)
-        const searchLimit = Math.max(0, offset - 2000);
-        
+
+        // 对于 Vue 文件，只扫描 <script> 标签内的内容
+        let scriptStart = 0;
+        let scriptEnd = text.length;
+
+        if (document.fileName.endsWith('.vue')) {
+            const scriptTagMatch = text.match(/<script[^>]*>/);
+            if (scriptTagMatch) {
+                scriptStart = (scriptTagMatch.index || 0) + scriptTagMatch[0].length;
+                const scriptCloseMatch = text.indexOf('</script>', scriptStart);
+                if (scriptCloseMatch !== -1) {
+                    scriptEnd = scriptCloseMatch;
+                }
+            }
+        }
+        if (offset < scriptStart || offset > scriptEnd) {
+            return undefined;
+        }
+
+        // Safety check limit (look back max 2000 chars, but not before script start)
+        const searchLimit = Math.max(scriptStart, offset - 2000);
+
         // Forward Scan on Window to simplify parsing
         const windowStart = searchLimit;
         const windowEnd = offset;
         const snippet = text.substring(windowStart, windowEnd);
-        
+
         // Tokenize properly retaining string values to extract arguments
         const tokens = this.tokenize(snippet);
-        
+
         // Parse stack to find enclosing function call and extracted args
-        return this.analyzeTokens(tokens);
+        const result = this.analyzeTokens(tokens);
+
+        return result;
     }
-    
+
     private tokenize(code: string): { type: 'word' | 'symbol' | 'string', value: string, index: number }[] {
         const tokens: { type: 'word' | 'symbol' | 'string', value: string, index: number }[] = [];
-        
-        // Regex: 
-        // 1. Strings: "...", '...', `...` - match content non-greedily including newlines
+
+        // Regex:
+        // 1. Strings: "...", '...', `...` - 单行匹配，避免截断导致跨行错误配对
         // 2. Symbols: ( ) [ ] { } ,
         // 3. Words: identifiers
-        
-        // Note: [\s\S] matches any character including newline
-        const tokenRegex = /("[\s\S]*?"|'[\s\S]*?'|`[\s\S]*?`)|([(){},\[\]])|([a-zA-Z0-9_$]+)/g;
-        
+
+        // 字符串匹配不跨行，避免 snippet 截断导致未闭合引号与后续引号错误配对
+        const tokenRegex = /("[^\n]*?"|'[^\n]*?'|`[^`]*?`)|([(){},\[\]])|([a-zA-Z0-9_$]+)/g;
+
         // Pre-process: replace comments with spaces to avoid matching inside comments
         // Block comments: /\*[\s\S]*?\*/
         // Line comments: //.*$
-        
+
         // We do this carefully. If we just blindly replace, we might mess up if a comment looks like a string or vice versa.
         // But for a simple scanner, standard strip is usually okay.
         const codeWithoutComments = code.replace(/\/\/.*$/gm, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
-        
+
         let match;
         while ((match = tokenRegex.exec(codeWithoutComments)) !== null) {
             if (match[1]) {
@@ -67,28 +87,28 @@ export class VuexContextScanner {
         }
         return tokens;
     }
-    
+
     private analyzeTokens(tokens: { type: string, value: string }[]): VuexContext | undefined {
         // Stack to track brackets/parentheses and what precedes them
         // We also want to track arguments 'accumulated' inside the current parentheses scope
-        const outputStack: { 
-            token: string, 
-            index: number, 
-            precedingWord: string, 
-            extractedArgs: string[], 
+        const outputStack: {
+            token: string,
+            index: number,
+            precedingWord: string,
+            extractedArgs: string[],
             argIndex: number // Track current argument index (comma count)
         }[] = [];
-        
+
         let prevWord = '';
-        
+
         for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i];
-            
+
             if (token.type === 'symbol') {
                 if (['(', '{', '['].includes(token.value)) {
-                    outputStack.push({ 
-                        token: token.value, 
-                        index: i, 
+                    outputStack.push({
+                        token: token.value,
+                        index: i,
                         precedingWord: prevWord,
                         extractedArgs: [],
                         argIndex: 0
@@ -126,16 +146,15 @@ export class VuexContextScanner {
                 prevWord = token.value;
             }
         }
-        
+
         // Now, look at the stack to find the immediate Vuex context.
-        // We traverse from innermost (top of stack) to outwards.
-        
+
         // nestingLevel: 0 means we are directly in the function. > 0 means we are in [ or {
         let nestingLevel = 0;
 
         for (let i = outputStack.length - 1; i >= 0; i--) {
             const frame = outputStack[i];
-            
+
             if (frame.token === '(') {
                 const func = frame.precedingWord;
                 let namespace: string | undefined = undefined;
@@ -148,7 +167,7 @@ export class VuexContextScanner {
                          namespace = firstArg.slice(1, -1);
                     }
                 }
-                
+
                 // If we are in the first argument (argIndex 0), namespace is not yet established from arguments
                 // (unless we are editing it right now, which is handled by provider logic using direct string match)
                 if (frame.argIndex === 0) {
@@ -161,10 +180,10 @@ export class VuexContextScanner {
                     if (func === 'mapGetters') type = 'getter';
                     if (func === 'mapMutations') type = 'mutation';
                     if (func === 'mapActions') type = 'action';
-                    
-                    return { 
-                        type, 
-                        method: 'mapHelper', 
+
+                    return {
+                        type,
+                        method: 'mapHelper',
                         namespace,
                         argumentIndex: frame.argIndex,
                         isNested: nestingLevel > 0,
@@ -176,9 +195,9 @@ export class VuexContextScanner {
                     let type: VuexContextType = 'unknown';
                      if (func === 'commit') type = 'mutation';
                      if (func === 'dispatch') type = 'action';
-                     return { 
-                         type, 
-                         method: func as any, 
+                     return {
+                         type,
+                         method: func as any,
                          namespace, // Usually commit('ns/module')
                          argumentIndex: frame.argIndex,
                          isNested: nestingLevel > 0,
@@ -186,12 +205,12 @@ export class VuexContextScanner {
                      };
                 }
             }
-            
-            // If we didn't return, we are going up the stack. 
+
+            // If we didn't return, we are going up the stack.
             // The current frame (e.g. '[') contributes to nesting for the *next* iteration (parent).
             nestingLevel++;
         }
-        
+
         return undefined;
     }
 }
