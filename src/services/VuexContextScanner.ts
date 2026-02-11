@@ -8,6 +8,7 @@ export interface VuexContext {
     namespace?: string;
     argumentIndex?: number; // 0-based index of the argument we are in
     isNested?: boolean; // true if we are inside [ ] or { } within the function call
+    isObject?: boolean; // true if we are inside { } (Object context)
 }
 
 export class VuexContextScanner {
@@ -138,7 +139,7 @@ export class VuexContextScanner {
             if (frame.token === '(') {
                 const func = frame.precedingWord;
                 let namespace: string | undefined = undefined;
-                
+
                 // Identify namespace if present (if we are at argIndex >= 1)
                 if (frame.extractedArgs.length > 0) {
                     const firstArg = frame.extractedArgs[0];
@@ -166,7 +167,8 @@ export class VuexContextScanner {
                         method: 'mapHelper', 
                         namespace,
                         argumentIndex: frame.argIndex,
-                        isNested: nestingLevel > 0 
+                        isNested: nestingLevel > 0,
+                        isObject: nestingLevel > 0 && outputStack[outputStack.length - 1].token === '{'
                     };
                 }
 
@@ -174,13 +176,13 @@ export class VuexContextScanner {
                     let type: VuexContextType = 'unknown';
                      if (func === 'commit') type = 'mutation';
                      if (func === 'dispatch') type = 'action';
-
                      return { 
                          type, 
                          method: func as any, 
                          namespace, // Usually commit('ns/module')
                          argumentIndex: frame.argIndex,
-                         isNested: nestingLevel > 0
+                         isNested: nestingLevel > 0,
+                         isObject: false // commit/dispatch don't usually use object context like mapHelpers
                      };
                 }
             }
