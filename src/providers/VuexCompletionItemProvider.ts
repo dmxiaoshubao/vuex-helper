@@ -46,7 +46,7 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                 allModules.forEach(mod => {
                     const item = new vscode.CompletionItem(mod, vscode.CompletionItemKind.Module);
                     item.detail = '[Vuex Module]';
-                    item.sortText = `\u0000${mod}`; // 使用 null 字符确保最高优先级
+                    item.sortText = `\u0000\u0000${mod}`; // 使用双重 null 字符确保最高优先级
                     item.preselect = true; // 标记为预选项
                     moduleItems.push(item);
                 });
@@ -210,7 +210,7 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                             if (!suggestions.has(label)) {
                                 const ci = new vscode.CompletionItem(label, vscode.CompletionItemKind.Field);
                                 ci.detail = `[Vuex] State`;
-                                ci.sortText = `\u0000${label}`; // 使用 null 字符确保最高优先级
+                                ci.sortText = `\u0000\u0000${label}`; // 使用双重 null 字符确保最高优先级
                                 ci.preselect = true; // 标记为预选项
                                 ci.documentation = item.documentation ? new vscode.MarkdownString(item.documentation) : undefined;
                                 ci.insertText = label;
@@ -227,7 +227,7 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                             if (!suggestions.has(nextModule)) {
                                 const ci = new vscode.CompletionItem(nextModule, vscode.CompletionItemKind.Module);
                                 ci.detail = `[Vuex] Module`;
-                                ci.sortText = `\u0000${nextModule}`; // 使用 null 字符确保最高优先级
+                                ci.sortText = `\u0000\u0000${nextModule}`; // 使用双重 null 字符确保最高优先级
                                 ci.preselect = true; // 标记为预选项
                                 ci.insertText = nextModule;
                                 ci.range = replacementRange;
@@ -254,7 +254,7 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
 
                 const completionItem = new vscode.CompletionItem(label, kind);
                 completionItem.detail = `[Vuex] ${vuexContext.type}`;
-                completionItem.sortText = `\u0000${label}`; // 使用 null 字符确保最高优先级
+                completionItem.sortText = `\u0000\u0000${label}`; // 使用双重 null 字符确保最高优先级
                 completionItem.preselect = true; // 标记为预选项
                 
                 if (item.documentation) {
@@ -311,7 +311,9 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                 );
 
                 completionItem.detail = `[Vuex Store] ${propertyType}`;
-                completionItem.sortText = `\u0000${fullPath}`;
+                // 使用统一的前缀确保所有 Vuex 补全项都排在最前面
+                // 根级别和模块级别使用相同的排序优先级
+                completionItem.sortText = `\u0000\u0000${fullPath}`;
                 completionItem.preselect = true;
 
                 if (item.documentation) {
@@ -330,18 +332,19 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                     completionItem.range = bracketReplacementRange;
                     completionItem.insertText = `['${fullPath}']`;
                     // 设置 filterText 以确保在输入 "." 时也能显示
-                    // 例如：用户输入 "."，filterText 为 ".user/name"，这样 VS Code 就能匹配到
                     completionItem.filterText = '.' + partialInput + fullPath;
                 } else {
-                    // 普通属性访问，只替换部分输入
+                    // 普通属性访问，也包含点号以保持一致性
                     const replacementRange = new vscode.Range(
                         position.line,
-                        position.character - partialInput.length,
+                        position.character - partialInput.length - 1, // -1 to include the dot
                         position.line,
                         position.character
                     );
                     completionItem.range = replacementRange;
-                    completionItem.insertText = fullPath;
+                    completionItem.insertText = '.' + fullPath;
+                    // 为根级别项目也设置 filterText
+                    completionItem.filterText = '.' + partialInput + fullPath;
                 }
 
                 items.push(completionItem);
@@ -357,10 +360,10 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             const partialInput = storeMatch[1]; // e.g., "d" or "dis" or ""
             const items: vscode.CompletionItem[] = [];
 
-            // Calculate replacement range to cover the partial input
+            // Calculate replacement range to include the dot
             const replacementRange = new vscode.Range(
                 position.line,
-                position.character - partialInput.length,
+                position.character - partialInput.length - 1, // -1 to include the dot
                 position.line,
                 position.character
             );
@@ -369,38 +372,44 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             const stateItem = new vscode.CompletionItem('state', vscode.CompletionItemKind.Property);
             stateItem.detail = '[Vuex Store] Access state';
             stateItem.documentation = new vscode.MarkdownString('Access the Vuex store state tree');
-            stateItem.sortText = '\u0000state';
+            stateItem.sortText = '\u0000\u0000state';
             stateItem.preselect = true;
             stateItem.range = replacementRange;
+            stateItem.insertText = '.state';
+            stateItem.filterText = '.' + partialInput + 'state';
             items.push(stateItem);
 
             // getters
             const gettersItem = new vscode.CompletionItem('getters', vscode.CompletionItemKind.Property);
             gettersItem.detail = '[Vuex Store] Access getters';
             gettersItem.documentation = new vscode.MarkdownString('Access the Vuex store getters');
-            gettersItem.sortText = '\u0000getters';
+            gettersItem.sortText = '\u0000\u0000getters';
             gettersItem.preselect = true;
             gettersItem.range = replacementRange;
+            gettersItem.insertText = '.getters';
+            gettersItem.filterText = '.' + partialInput + 'getters';
             items.push(gettersItem);
 
             // commit
             const commitItem = new vscode.CompletionItem('commit', vscode.CompletionItemKind.Method);
             commitItem.detail = '[Vuex Store] Commit mutation';
             commitItem.documentation = new vscode.MarkdownString('Commit a mutation to the Vuex store');
-            commitItem.insertText = new vscode.SnippetString('commit($0)');
-            commitItem.sortText = '\u0000commit';
+            commitItem.insertText = new vscode.SnippetString('.commit($0)');
+            commitItem.sortText = '\u0000\u0000commit';
             commitItem.preselect = true;
             commitItem.range = replacementRange;
+            commitItem.filterText = '.' + partialInput + 'commit';
             items.push(commitItem);
 
             // dispatch
             const dispatchItem = new vscode.CompletionItem('dispatch', vscode.CompletionItemKind.Method);
             dispatchItem.detail = '[Vuex Store] Dispatch action';
             dispatchItem.documentation = new vscode.MarkdownString('Dispatch an action to the Vuex store');
-            dispatchItem.insertText = new vscode.SnippetString('dispatch($0)');
-            dispatchItem.sortText = '\u0000dispatch';
+            dispatchItem.insertText = new vscode.SnippetString('.dispatch($0)');
+            dispatchItem.sortText = '\u0000\u0000dispatch';
             dispatchItem.preselect = true;
             dispatchItem.range = replacementRange;
+            dispatchItem.filterText = '.' + partialInput + 'dispatch';
             items.push(dispatchItem);
 
             return new vscode.CompletionList(items, false);
@@ -411,11 +420,25 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
             const nsJoined = currentNamespace.join('/');
             const items = storeMap.state.filter(s => s.modulePath.join('/') === nsJoined);
 
+            // 计算替换范围，包含点号
+            const dotMatch = prefix.match(/state\.([a-zA-Z0-9_$]*)$/);
+            const partialInput = dotMatch ? dotMatch[1] : '';
+            const replacementRange = new vscode.Range(
+                position.line,
+                position.character - partialInput.length - 1, // -1 to include the dot
+                position.line,
+                position.character
+            );
+
             const completionItems = items.map(item => {
                 const completionItem = new vscode.CompletionItem(item.name, vscode.CompletionItemKind.Field);
                 completionItem.detail = `[Vuex Module] state`;
-                completionItem.sortText = `\u0000${item.name}`; // 使用 null 字符确保最高优先级
+                completionItem.sortText = `\u0000\u0000${item.name}`; // 使用双重 null 字符确保最高优先级
                 completionItem.preselect = true; // 标记为预选项
+                completionItem.range = replacementRange;
+                completionItem.insertText = '.' + item.name;
+                completionItem.filterText = '.' + partialInput + item.name;
+
                 if (item.documentation) {
                     completionItem.documentation = new vscode.MarkdownString(item.documentation);
                 }
@@ -459,7 +482,7 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                 
                 const item = new vscode.CompletionItem(localName, kind);
                 item.detail = `[Vuex Mapped] ${info.type} -> ${info.namespace ? info.namespace + '/' : ''}${info.originalName}`;
-                item.sortText = `\u0000${localName}`; // 使用 null 字符确保最高优先级
+                item.sortText = `\u0000\u0000${localName}`; // 使用双重 null 字符确保最高优先级
                 item.preselect = true;
                 
                 const storeMatch = this.findStoreItem(info.originalName, info.type, info.namespace, storeMap);
@@ -473,12 +496,12 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                     // We must replace the dot typed by the user.
                     item.range = bracketReplacementRange;
                     // Ensure filterText allows matching ".foo" against this item
-                    item.filterText = '.' + localName; 
+                    item.filterText = '.' + localName;
 
                     const quote = "'"; // Default to single quote
                     // Escape quotes in name just in case
                     const safeName = localName.replace(/'/g, "\\'");
-                    
+
                     if (info.type === 'mutation' || info.type === 'action') {
                         // Append parentheses for methods and place cursor inside?
                         // User requirement: "mutations / actions need to append () ... eg: this['...']()"
@@ -488,6 +511,10 @@ export class VuexCompletionItemProvider implements vscode.CompletionItemProvider
                         // Property access only
                         item.insertText = `['${safeName}']`;
                     }
+                } else {
+                    // 普通映射属性，也设置 range 和 filterText 以保持一致性
+                    item.range = bracketReplacementRange;
+                    item.filterText = '.' + localName;
                 }
 
                 items.push(item);
