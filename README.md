@@ -4,6 +4,8 @@
 
 VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, and **Hover Information** for State, Getters, Mutations, and Actions.
 
+⭐ If you find this extension helpful, please give it a star on [GitHub](https://github.com/dmxiaoshubao/vuex-helper)! Your support is greatly appreciated.
+
 ## Features
 
 ### 1. Go to Definition

@@ -2,6 +2,8 @@
 
 适用于 Vuex 2 的 VS Code 插件，提供 **跳转定义**、**代码补全** 和 **悬浮提示** 功能。支持 State, Getters, Mutations 和 Actions。
 
+⭐ 如果这个插件对你有帮助，请在 [GitHub](https://github.com/dmxiaoshubao/vuex-helper) 上给个 Star，感谢您的支持！
+
 ## 功能特性
 
 ### 1. 跳转定义 (Go to Definition)
