@@ -29,6 +29,7 @@
 - **上下文感知**: 在 `dispatch` 中提示 Actions，在 `commit` 中提示 Mutations。
 - **命名空间过滤**: 当使用 `mapState('user', [...])` 时，会自动过滤并仅显示 `user` 模块下的内容。
 - **组件映射方法**: 输入 `this.` 即可提示映射的方法（例如 `this.increment` 映射自 `...mapMutations(['increment'])`）。
+- **方括号语法**: 支持 `this['namespace/method']` 语法访问映射属性。
 - **语法支持**: 支持数组语法和对象别名语法 (例如 `...mapActions({ alias: 'name' })`)。
 
 ### 3. 悬浮提示与类型推导 (Hover Information & Type Inference)
@@ -90,6 +91,16 @@
   - 绝对路径: `/User/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 0.0.2
+
+增强补全功能和 Bug 修复：
+
+- **新增**: `this.xxx` 映射属性补全，支持 `mapState`, `mapGetters`, `mapMutations`, `mapActions`
+- **新增**: `this['xxx']` 方括号语法补全支持
+- **修复**: ComponentMapper 预处理不完整代码（如行末的 `this.`）
+- **修复**: 方括号补全的范围计算问题
+- **优化**: 移除 mutation/action 自动添加的括号
 
 ### 0.0.1
 

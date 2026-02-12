@@ -224,6 +224,17 @@ export class VuexCompletionItemProvider
         const baseNamespace = currentNamespace || [];
         const targetPath = [...baseNamespace, ...relativePath];
 
+        // 计算正确的替换范围：从点号位置到光标位置
+        // 光标位置 - currentWordLength 是用户输入的起始位置
+        // 再 -1 是点号的位置
+        const dotPosition = position.character - currentWordLength - 1;
+        const dotRange = new vscode.Range(
+          position.line,
+          Math.max(0, dotPosition),
+          position.line,
+          position.character,
+        );
+
         const suggestions = new Map<string, vscode.CompletionItem>();
 
         items.forEach((item) => {
@@ -250,11 +261,11 @@ export class VuexCompletionItemProvider
                 "[Vuex] State",
                 item.documentation,
               );
-              ci.insertText = label;
-              ci.range = replacementRange;
-              // 优化 filterText：包含完整路径以提高匹配分数
-              // 例如：用户输入 "state.others."，filterText 为 "others.age"
-              ci.filterText = pathPrefix + label + (whitespaceSuffix || "");
+              // 使用点号范围的插入文本，包含点号
+              ci.insertText = "." + label;
+              ci.range = dotRange;
+              // filterText 包含点号以便正确过滤
+              ci.filterText = "." + pathPrefix + label;
               suggestions.set(label, ci);
             }
           } else {
@@ -267,11 +278,9 @@ export class VuexCompletionItemProvider
                 vscode.CompletionItemKind.Module,
                 "[Vuex] Module",
               );
-              ci.insertText = nextModule;
-              ci.range = replacementRange;
-              // 优化 filterText：包含完整路径以提高匹配分数
-              ci.filterText =
-                pathPrefix + nextModule + (whitespaceSuffix || "");
+              ci.insertText = "." + nextModule;
+              ci.range = dotRange;
+              ci.filterText = "." + pathPrefix + nextModule;
               suggestions.set(nextModule, ci);
             }
           }
@@ -315,21 +324,31 @@ export class VuexCompletionItemProvider
           // 在引号内，需要检查右侧是否有空格和相同类型的引号
           const lineTextAfterCursor = lineText.substring(position.character);
 
-          // 计算右侧需要包含的字符数：只包含空格，不包含引号
-          const { spacesCount, hasClosing: hasClosingQuote } =
+          // 计算右侧需要包含的字符数和闭合引号位置
+          const { spacesCount, hasClosing: hasClosingQuote, closingIndex } =
             this.scanRightSide(lineTextAfterCursor, quoteChar);
 
-          // 扩展替换范围到右侧（只包含空格，不包含引号）
-          const extendedRange = new vscode.Range(
-            replacementRange.start.line,
-            replacementRange.start.character,
-            replacementRange.end.line,
-            replacementRange.end.character + spacesCount,
-          );
-          completionItem.range = extendedRange;
-
-          // 如果右侧没有引号，插入内容 + 引号；否则只插入内容
-          if (!hasClosingQuote) {
+          if (hasClosingQuote) {
+            // 如果有闭合引号，扩展范围到包含引号之前的内容（包括中间的字符如 "Name"）
+            // closingIndex 是相对于 lineTextAfterCursor 的位置
+            const rightExtension = closingIndex; // 包含从光标到闭合引号之间的所有内容
+            const extendedRange = new vscode.Range(
+              replacementRange.start.line,
+              replacementRange.start.character,
+              replacementRange.end.line,
+              replacementRange.end.character + rightExtension,
+            );
+            completionItem.range = extendedRange;
+            completionItem.insertText = label;
+          } else {
+            // 如果没有闭合引号，只包含空格，并添加闭合引号
+            const extendedRange = new vscode.Range(
+              replacementRange.start.line,
+              replacementRange.start.character,
+              replacementRange.end.line,
+              replacementRange.end.character + spacesCount,
+            );
+            completionItem.range = extendedRange;
             completionItem.insertText = `${label}${quoteChar}`;
           }
         } else {
@@ -356,9 +375,9 @@ export class VuexCompletionItemProvider
     const prefix = lineText.substring(0, position.character);
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
-    // 不要求匹配到行尾，因为光标可能在引号内容和结束引号之间
+    // 匹配到开始引号为止，后面的内容（包括可能的结束引号）通过 prefix 来确定
     const storeBracketMatch = prefix.match(
-      /(?:this|vm)\.\$store\.(state|getters)\[['"]([^'"]*)$/,
+      /(?:this|vm)\.\$store\.(state|getters)\[['"]([^'"]*)/,
     );
 
     if (storeBracketMatch) {
@@ -400,22 +419,37 @@ export class VuexCompletionItemProvider
 
         // 计算右侧需要包含的字符数：空格 + 可能的 ']
         const closingBracket = `${quoteChar}]`;
-        const { spacesCount, hasClosing: hasClosingBracket } =
+        const { spacesCount, hasClosing: hasClosingBracket, closingIndex } =
           this.scanRightSide(lineTextAfterCursor, closingBracket);
-        const rightExtension =
-          spacesCount + (hasClosingBracket ? closingBracket.length : 0);
 
-        // 替换范围：从引号后到光标位置，再延伸到右侧包含空格和 ']
-        const replacementRange = new vscode.Range(
-          position.line,
-          quoteIndex,
-          position.line,
-          position.character + rightExtension,
-        );
+        // 简化逻辑：始终替换从引号后到闭合符号（如果有）或光标位置的内容
+        if (hasClosingBracket) {
+          // 如果有闭合符号，替换从引号后到闭合符号结束的所有内容
+          // closingIndex 是闭合符号在 lineTextAfterCursor 中的起始位置
+          // 需要包含的内容：closingIndex 个字符 + closingBracket 的长度
+          const rightExtension = closingIndex + closingBracket.length;
+          const replacementRange = new vscode.Range(
+            position.line,
+            quoteIndex,
+            position.line,
+            position.character + rightExtension,
+          );
+          completionItem.range = replacementRange;
+          // 插入完整路径和闭合符号
+          completionItem.insertText = `${fullPath}${closingBracket}`;
+        } else {
+          // 如果没有闭合符号，只包含空格，并添加闭合符号
+          const rightExtension = spacesCount;
+          const replacementRange = new vscode.Range(
+            position.line,
+            quoteIndex,
+            position.line,
+            position.character + rightExtension,
+          );
+          completionItem.range = replacementRange;
+          completionItem.insertText = `${fullPath}${closingBracket}`;
+        }
 
-        completionItem.range = replacementRange;
-        // 插入完整的内容加上对应的结束符号（使用相同的引号类型）
-        completionItem.insertText = `${fullPath}${closingBracket}`;
         // filterText 需要匹配用户的实际输入（包括空格），这样 VS Code 才能正确过滤
         completionItem.filterText =
           partialInput.trim() === fullPath ? partialInput : fullPath;
@@ -426,14 +460,22 @@ export class VuexCompletionItemProvider
       return new vscode.CompletionList(items, false);
     }
 
-    // 2b. Match this.$store.state.xxx or this.$store.getters.xxx
+    // 2b. Match this.$store.state.xxx or this.$store.getters.xxx (支持多级访问)
     const storePropertyMatch = prefix.match(
-      /(?:this|vm)\.\$store\.(state|getters)\.([a-zA-Z0-9_$/]*)$/,
+      /(?:this|vm)\.\$store\.(state|getters)\.([\w\.\/]*)$/,
     );
 
     if (storePropertyMatch) {
       const propertyType = storePropertyMatch[1]; // 'state' or 'getters'
-      const partialInput = storePropertyMatch[2]; // e.g., "use" or "user/log" or ""
+      const pathInput = storePropertyMatch[2]; // e.g., "user." or "user.na" or ""
+
+      // 解析路径：分离模块路径和当前输入
+      // "user.name" -> modulePath: ["user"], currentInput: "name"
+      // "user." -> modulePath: ["user"], currentInput: ""
+      // "name" -> modulePath: [], currentInput: "name"
+      const pathParts = pathInput.split(".");
+      const currentInput = pathParts[pathParts.length - 1] || "";
+      const modulePath = pathParts.slice(0, -1);
 
       const items: vscode.CompletionItem[] = [];
 
@@ -441,40 +483,64 @@ export class VuexCompletionItemProvider
       const storeItems =
         propertyType === "state" ? storeMap.state : storeMap.getters;
 
+      const suggestions = new Map<string, vscode.CompletionItem>();
+
       storeItems.forEach((item: any) => {
-        const fullPath = this.getFullPath(item);
-
-        const completionItem = this.createCompletionItem(
-          fullPath,
-          propertyType === "state"
-            ? vscode.CompletionItemKind.Field
-            : vscode.CompletionItemKind.Property,
-          `[Vuex Store] ${propertyType}`,
-          item.documentation,
-        );
-
-        // If the path contains '/', use bracket notation and remove the preceding dot
-        const dotRange = this.createDotRange(
-          position.line,
-          position.character,
-          partialInput.length,
-        );
-        if (fullPath.includes("/")) {
-          completionItem.range = dotRange;
-          completionItem.insertText = `['${fullPath}']`;
-          // filterText 只包含点号+路径，让 VSCode 根据用户输入自然过滤
-          completionItem.filterText = "." + fullPath;
-        } else {
-          // 普通属性访问，也包含点号以保持一致性
-          completionItem.range = dotRange;
-          completionItem.insertText = "." + fullPath;
-          completionItem.filterText = "." + fullPath;
+        // 检查 item 是否匹配当前模块路径
+        if (item.modulePath.length < modulePath.length) return;
+        for (let i = 0; i < modulePath.length; i++) {
+          if (item.modulePath[i] !== modulePath[i]) return;
         }
 
-        items.push(completionItem);
+        const remainingPath = item.modulePath.slice(modulePath.length);
+
+        if (remainingPath.length === 0) {
+          // 直接属性
+          const label = item.name;
+          if (!suggestions.has(label)) {
+            const ci = this.createCompletionItem(
+              label,
+              propertyType === "state"
+                ? vscode.CompletionItemKind.Field
+                : vscode.CompletionItemKind.Property,
+              `[Vuex Store] ${propertyType}`,
+              item.documentation,
+            );
+
+            const dotRange = this.createDotRange(
+              position.line,
+              position.character,
+              currentInput.length,
+            );
+            ci.range = dotRange;
+            ci.insertText = "." + label;
+            ci.filterText = "." + pathInput + label;
+            suggestions.set(label, ci);
+          }
+        } else {
+          // 子模块
+          const nextModule = remainingPath[0];
+          if (!suggestions.has(nextModule)) {
+            const ci = this.createCompletionItem(
+              nextModule,
+              vscode.CompletionItemKind.Module,
+              `[Vuex Store] Module`,
+            );
+
+            const dotRange = this.createDotRange(
+              position.line,
+              position.character,
+              currentInput.length,
+            );
+            ci.range = dotRange;
+            ci.insertText = "." + nextModule;
+            ci.filterText = "." + pathInput + nextModule;
+            suggestions.set(nextModule, ci);
+          }
+        }
       });
 
-      return new vscode.CompletionList(items, false);
+      return new vscode.CompletionList(Array.from(suggestions.values()), false);
     }
 
     // 3. this.$store. completion (state, getters, commit, dispatch)
@@ -582,77 +648,115 @@ export class VuexCompletionItemProvider
     // 4. this.xxx or vm.xxx completion (mapped properties)
     const match = prefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
 
-    if (match) {
+    // 4b. this['xxx'] or vm['xxx'] bracket notation completion
+    const bracketMatch = prefix.match(/(?:this|vm)\[['"]([^'"]*)$/);
+
+    if (match || bracketMatch) {
       const mapping = this.componentMapper.getMapping(document);
       const items: vscode.CompletionItem[] = [];
 
-      // Range covering the dot and the identifier typed so far
-      const validIdLength = match[1].length;
+      // 判断是点号访问还是方括号访问
+      const isBracketAccess = !!bracketMatch;
+      const partialInput = isBracketAccess ? bracketMatch![1] : match![1];
 
-      // Range that includes the dot (e.g. ".o")
-      const bracketReplacementRange = this.createDotRange(
-        position.line,
-        position.character,
-        validIdLength,
-      );
+      if (isBracketAccess) {
+        // 方括号访问: this['xxx']
+        // 找到开始引号的位置来计算 range
+        const quoteChar = prefix[prefix.lastIndexOf("[") + 1];
 
-      for (const localName in mapping) {
-        const info = mapping[localName];
-        let kind = vscode.CompletionItemKind.Method;
-        if (info.type === "state") kind = vscode.CompletionItemKind.Field;
-        if (info.type === "getter") kind = vscode.CompletionItemKind.Property;
+        // 检查光标后面的内容
+        const lineTextAfterCursor = lineText.substring(position.character);
+        const closingBracket = `${quoteChar}]`;
+        const { closingIndex } = this.scanRightSide(lineTextAfterCursor, closingBracket);
 
-        const mappedDetail = `[Vuex Mapped] ${info.type} -> ${info.namespace ? info.namespace + "/" : ""}${info.originalName}`;
-        const item = this.createCompletionItem(localName, kind, mappedDetail);
+        // 计算结束位置：包含右侧的结束引号和方括号
+        const bracketEndChar = closingIndex >= 0
+          ? position.character + closingIndex + closingBracket.length
+          : position.character;
 
-        const storeMatch = this.findStoreItem(
-          info.originalName,
-          info.type,
-          info.namespace,
-          storeMap,
-        );
-        if (storeMatch && storeMatch.documentation) {
-          item.documentation = new vscode.MarkdownString(
-            storeMatch.documentation,
+        for (const localName in mapping) {
+          const info = mapping[localName];
+          let kind = vscode.CompletionItemKind.Method;
+          if (info.type === "state") kind = vscode.CompletionItemKind.Field;
+          if (info.type === "getter") kind = vscode.CompletionItemKind.Property;
+
+          const mappedDetail = `[Vuex Mapped] ${info.type} -> ${info.namespace ? info.namespace + "/" : ""}${info.originalName}`;
+          const item = this.createCompletionItem(localName, kind, mappedDetail);
+
+          // Range 从引号后开始到结束引号和方括号
+          item.range = new vscode.Range(
+            position.line,
+            position.character - partialInput.length,
+            position.line,
+            bracketEndChar,
           );
-        }
 
-        // Handling namespaced helpers (containing slashes)
-        if (localName.includes("/")) {
-          // Use bracket notation: this['others/ADD_ROLE']
-          // We must replace the dot typed by the user.
-          item.range = bracketReplacementRange;
-          // Ensure filterText allows matching ".foo" against this item
-          item.filterText = "." + localName;
+          item.filterText = localName;
 
-          const quote = "'"; // Default to single quote
-          // Escape quotes in name just in case
           const safeName = localName.replace(/'/g, "\\'");
+          const endQuote = quoteChar === "'" ? "'" : '"';
 
-          if (info.type === "mutation" || info.type === "action") {
-            // Append parentheses for methods and place cursor inside?
-            // User requirement: "mutations / actions need to append () ... eg: this['...']()"
-            // Usually implies cursor after or inside. Let's put cursor inside for args.
-            item.insertText = new vscode.SnippetString(`['${safeName}']($0)`);
-          } else {
-            // Property access only
-            item.insertText = `['${safeName}']`;
+          // 不自动添加 ()，让用户自己填写
+          item.insertText = `${safeName}${endQuote}]`;
+
+          items.push(item);
+        }
+      } else {
+        // 点号访问: this.xxx
+        // Range covering the dot and the identifier typed so far
+        const validIdLength = partialInput.length;
+
+        // Range that includes the dot (e.g. ".o")
+        const bracketReplacementRange = this.createDotRange(
+          position.line,
+          position.character,
+          validIdLength,
+        );
+
+        for (const localName in mapping) {
+          const info = mapping[localName];
+          let kind = vscode.CompletionItemKind.Method;
+          if (info.type === "state") kind = vscode.CompletionItemKind.Field;
+          if (info.type === "getter") kind = vscode.CompletionItemKind.Property;
+
+          const mappedDetail = `[Vuex Mapped] ${info.type} -> ${info.namespace ? info.namespace + "/" : ""}${info.originalName}`;
+          const item = this.createCompletionItem(localName, kind, mappedDetail);
+
+          const storeMatch = this.findStoreItem(
+            info.originalName,
+            info.type,
+            info.namespace,
+            storeMap,
+          );
+          if (storeMatch && storeMatch.documentation) {
+            item.documentation = new vscode.MarkdownString(
+              storeMatch.documentation,
+            );
           }
-        } else {
-          // 普通映射属性，也设置 range 和 filterText 以保持一致性
-          item.range = bracketReplacementRange;
-          item.filterText = "." + localName;
-          // 设置 insertText 以确保正确插入（包含点号）
-          if (info.type === "mutation" || info.type === "action") {
-            // 方法需要添加括号
-            item.insertText = new vscode.SnippetString(`.${localName}($0)`);
+
+          // Handling namespaced helpers (containing slashes)
+          if (localName.includes("/")) {
+            // Use bracket notation: this['others/ADD_ROLE']
+            // We must replace the dot typed by the user.
+            item.range = bracketReplacementRange;
+            // Ensure filterText allows matching ".foo" against this item
+            item.filterText = "." + localName;
+
+            // Escape quotes in name just in case
+            const safeName = localName.replace(/'/g, "\\'");
+
+            // 不自动添加 ()，让用户自己填写
+            item.insertText = `['${safeName}']`;
           } else {
-            // 属性访问
+            // 普通映射属性
+            item.range = bracketReplacementRange;
+            item.filterText = "." + localName;
+            // 不自动添加括号，避免与用户已输入的括号冲突
             item.insertText = "." + localName;
           }
-        }
 
-        items.push(item);
+          items.push(item);
+        }
       }
 
       if (items.length > 0) {
@@ -698,15 +802,17 @@ export class VuexCompletionItemProvider
   private scanRightSide(
     textAfterCursor: string,
     closingPattern: string,
-  ): { spacesCount: number; hasClosing: boolean } {
+  ): { spacesCount: number; hasClosing: boolean; closingIndex: number } {
     let spacesCount = 0;
     let i = 0;
     while (i < textAfterCursor.length && textAfterCursor[i] === " ") {
       spacesCount++;
       i++;
     }
-    const hasClosing = textAfterCursor.substring(i).startsWith(closingPattern);
-    return { spacesCount, hasClosing };
+    // 检查闭合符号是否在后面的任何位置（而不仅仅是开头）
+    const closingIndex = textAfterCursor.indexOf(closingPattern, i);
+    const hasClosing = closingIndex !== -1;
+    return { spacesCount, hasClosing, closingIndex };
   }
 
   /** 拼接 store item 的完整路径 */

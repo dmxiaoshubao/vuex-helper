@@ -31,6 +31,7 @@ Intelligent suggestions for Vuex keys and mapped methods.
 - **Context Aware**: Suggests actions for `dispatch`, mutations for `commit`, etc.
 - **Namespace Filtering**: When using `mapState('user', [...])`, it correctly filters and shows only items from the `user` module.
 - **Mapped Methods**: Type `this.` to see mapped methods (e.g., `this.increment` mapped from `...mapMutations(['increment'])`).
+- **Bracket Notation**: Support `this['namespace/method']` syntax for accessing mapped properties.
 - **Map Helpers**: Supports array and object syntax (e.g., `...mapActions({ alias: 'name' })`).
 
 ### 3. Hover Information & Type Inference
@@ -83,6 +84,16 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
   ```
 
 ## Release Notes
+
+### 0.0.2
+
+Enhanced completion features and bug fixes:
+
+- **Added**: `this.xxx` mapped property completion for `mapState`, `mapGetters`, `mapMutations`, `mapActions`
+- **Added**: `this['xxx']` bracket notation completion support
+- **Fixed**: ComponentMapper preprocessing for incomplete code (e.g., `this.` at end of line)
+- **Fixed**: Range calculation for bracket notation completion
+- **Improved**: Removed auto-added parentheses for mutation/action completions
 
 ### 0.0.1
 

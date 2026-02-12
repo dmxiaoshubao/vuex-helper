@@ -1,108 +1,150 @@
+/**
+ * Others Module - 产品与系统设置相关
+ */
 const state = {
-  /** 你好呀 */
-  name: "John Doe",
-  // User age
-  age: 25,
+  /** 产品名称 */
+  productName: "MyApp",
+  /** 产品版本 */
+  version: "1.0.0",
   /**
-   * User roles
-   * @type {string[]}
+   * 主题设置
+   * @type {'light' | 'dark' | 'auto'}
    */
-  roles: ["user"],
-  isActive: true, // Activity status
+  theme: "light",
+  /** 语言设置 */
+  language: "zh-CN",
+  /** 通知开关 */
+  notifications: true,
+  /** 最后更新时间 */
+  lastUpdated: null,
 };
 
 const mutations = {
   /**
-   * @description 设置名称
-   * @param {string} name 看看这是啥？
-   * 你好
+   * 设置产品名称
+   * @param {string} name
    */
-  SET_NAME(state, name) {
-    state.name = name;
-  },
-  testName(state, name) {
-    state.name = name;
-  },
-  // Set age
-  SET_AGE(state, age) {
-    state.age = age;
+  SET_PRODUCT_NAME(state, name) {
+    state.productName = name;
   },
   /**
-   * Add role
-   * @param {string} role
+   * 设置版本号
+   * @param {string} version
    */
-  ADD_ROLE(state, role) {
-    state.roles.push(role);
-  },
-  toggleActive(state) {
-    state.isActive = !state.isActive;
+  SET_VERSION(state, version) {
+    state.version = version;
+    state.lastUpdated = new Date().toISOString();
   },
   /**
-   * Set user profile
+   * 切换主题
    */
-  SET_PROFILE(state, profile) {
-    state.name = profile.name;
-    state.age = profile.age;
+  toggleTheme(state) {
+    const themes = ["light", "dark", "auto"];
+    const currentIndex = themes.indexOf(state.theme);
+    state.theme = themes[(currentIndex + 1) % themes.length];
+  },
+  /**
+   * 设置主题
+   * @param {'light' | 'dark' | 'auto'} theme
+   */
+  SET_THEME(state, theme) {
+    state.theme = theme;
+  },
+  /**
+   * 设置语言
+   * @param {string} language
+   */
+  SET_LANGUAGE(state, language) {
+    state.language = language;
+  },
+  /**
+   * 切换通知开关
+   */
+  toggleNotifications(state) {
+    state.notifications = !state.notifications;
+  },
+  /**
+   * 重置所有设置
+   */
+  RESET_SETTINGS(state) {
+    state.theme = "light";
+    state.language = "zh-CN";
+    state.notifications = true;
   },
 };
 
 const actions = {
-  // 嗯？
-  // 更新名称
-  updateName({ commit }, name) {
-    commit("SET_NAME", name);
-  },
-  updateInfoAsync({ commit, dispatch }, name) {
-    commit("SET_NAME", name);
-    dispatch("updateName", name);
+  /**
+   * 更新产品名称
+   * @param {string} name
+   */
+  updateProductName({ commit }, name) {
+    commit("SET_PRODUCT_NAME", name);
   },
   /**
-   * Fetch user profile
-   * @param {object} context
+   * 更新版本号
+   * @param {string} version
    */
-  async fetchProfile({ commit }) {
-    // mock api
-    const profile = { name: "Jane Doe", age: 30 };
-    commit("SET_PROFILE", profile);
-  },
-  // Logout user
-  logout({ commit }) {
-    commit("SET_NAME", "");
-    commit("SET_AGE", 0);
+  updateVersion({ commit }, version) {
+    commit("SET_VERSION", version);
   },
   /**
-   * Example of accessing root state and getters
-   * @param {object} context
+   * 异步切换主题
    */
-  accessRootState({ commit, rootState, rootGetters }) {
-    console.log("Root Count:", rootState.count);
-    console.log("Root IsLoggedIn:", rootGetters.isLoggedIn);
-
-    // Commit root mutation
-    commit("increment", null, { root: true });
+  async changeTheme({ commit }, theme) {
+    // 模拟异步操作
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    commit("SET_THEME", theme);
   },
   /**
-   * Example of dispatching root action
+   * 更新语言设置
+   * @param {string} language
    */
-  async callRootAction({ dispatch }) {
+  updateLanguage({ commit }, language) {
+    commit("SET_LANGUAGE", language);
+  },
+  /**
+   * 恢复出厂设置
+   */
+  async factoryReset({ commit, dispatch }) {
+    commit("RESET_SETTINGS");
+    await dispatch("updateVersion", "1.0.0");
+  },
+  /**
+   * 示例：访问根状态
+   */
+  accessRootState({ rootState }) {
+    console.log("Root count:", rootState.count);
+  },
+  /**
+   * 示例：dispatch 空字符串测试
+   */
+  async testDispatch({ dispatch }) {
     dispatch("");
   },
 };
 
 const getters = {
-  /** 获取大写名称 */
-  upperName: (state) => state.name.toUpperCase(),
-  // Get user age
-  userAge: (state) => state.age,
-  /**
-   * Check if user has role
-   * @param {object} state
-   * @returns {function}
-   */
-  hasRole: (state) => (role) => {
-    return state.roles.includes(role);
+  /** 获取完整产品信息 */
+  productInfo: (state) => ({
+    name: state.productName,
+    version: state.version,
+  }),
+  /** 是否为暗色主题 */
+  isDarkMode: (state) => state.theme === "dark",
+  /** 是否为自动主题 */
+  isAutoTheme: (state) => state.theme === "auto",
+  /** 获取当前语言的显示名称 */
+  languageDisplay: (state) => {
+    const map = {
+      "zh-CN": "简体中文",
+      "en-US": "English",
+      "ja-JP": "日本語",
+    };
+    return map[state.language] || state.language;
   },
-  isAdmin: (state) => state.roles.includes("admin"),
+  /** 通知是否启用 */
+  hasNotifications: (state) => state.notifications,
 };
 
 export default {
