@@ -48,22 +48,14 @@ export class StoreIndexer {
     }
 
     private async performIndex(interactive: boolean) {
-        console.log('Starting Vuex Store Indexing...');
         const storePath = await this.entryAnalyzer.analyze({ interactive });
         if (storePath) {
             this.lastStoreEntryPath = storePath;
             this.storeMap = await this.storeParser.parse(storePath);
-            console.log('Store indexing completed.', 
-                `State: ${this.storeMap.state.length}, `,
-                `Getters: ${this.storeMap.getters.length}, `,
-                `Mutations: ${this.storeMap.mutations.length}, `,
-                `Actions: ${this.storeMap.actions.length}`
-            );
         } else {
             // Avoid stale completion/definition results after store deletion/misconfiguration.
             this.lastStoreEntryPath = null;
             this.storeMap = null;
-            console.log('No store injection found.');
         }
     }
 

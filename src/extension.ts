@@ -7,8 +7,6 @@ import { ReindexScheduler } from './services/ReindexScheduler';
 import { ComponentMapper } from './services/ComponentMapper';
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Activating Vuex Helper...');
-
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         return;
@@ -38,7 +36,6 @@ export function activate(context: vscode.ExtensionContext) {
     // Re-index on configuration change
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('vuexHelper.storeEntry')) {
-            console.log('Configuration changed, re-indexing store...');
             scheduler.schedule();
             vscode.window.showInformationMessage('Vuex Helper: Store configuration updated. Re-indexing...');
         }
@@ -51,8 +48,6 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerCompletionItemProvider(selector, new VuexCompletionItemProvider(storeIndexer, sharedComponentMapper), "'", '"', '.'),
         vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper))
     );
-    
-    console.log('Vuex Helper activated.');
 }
 
 export function deactivate() {}

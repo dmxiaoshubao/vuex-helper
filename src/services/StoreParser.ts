@@ -40,7 +40,6 @@ export class StoreParser {
         this.visitedModuleScope.add(visitKey);
 
         this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
-        console.log(`Parsing module: ${filePath}, namespace: ${moduleNamespace.join('/')}`);
 
         try {
             const content = fs.readFileSync(filePath, 'utf-8');

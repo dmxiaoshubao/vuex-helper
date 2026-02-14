@@ -58,7 +58,6 @@ export class EntryAnalyzer {
             }
             
             if (resolvedPath && this.isAllowedStorePath(resolvedPath)) {
-                console.log(`Using configured store entry: ${resolvedPath}`);
                 return resolvedPath;
             } else {
                 if (interactive && !this.warnedInvalidConfiguredEntry.has(configuredEntry)) {
@@ -78,7 +77,6 @@ export class EntryAnalyzer {
         for (const file of entryFiles) {
             const storePath = this.findStoreInjection(file);
             if (storePath) {
-                console.log(`Found store injection in ${file}, store path: ${storePath}`);
                 return storePath;
             }
         }
