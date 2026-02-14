@@ -923,6 +923,33 @@ describe('VuexCompletionItemProvider', () => {
             assert.strictEqual(countItem.filterText, '.count', 'Store state member completion should keep dot-prefixed filterText');
         });
 
+        it('should provide completion for this alias _t.$store.state.', async () => {
+            const text = `const _t = this;\n_t.$store.state.`;
+            const position = { line: 1, character: `_t.$store.state.`.length } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find root state "count" for _t alias');
+        });
+
+        it('should provide completion for this alias optional chain _t?.$store?.state.', async () => {
+            const text = `const _t = this;\n_t?.$store?.state.`;
+            const position = { line: 1, character: `_t?.$store?.state.`.length } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find root state "count" for _t optional alias');
+            assert.strictEqual(countItem.filterText, '.count', 'Store state member completion should keep dot-prefixed filterText for alias optional chain');
+        });
+
         it('should provide completion for this.$store.state.user.', async () => {
             const text = `this.$store.state.user.`;
             const position = { line: 0, character: text.length } as any;
@@ -1045,6 +1072,55 @@ export default {
             assert.strictEqual(countItem.filterText, '?.count', 'Optional-chain mapped completion should use optional-chain filterText');
             assert.strictEqual(countItem.sortText, '\u0000\u0000\u0000count', 'Optional-chain mapped completion should boost sort priority');
             assert.strictEqual(countItem.insertText, '?.count', 'Optional-chain mapped completion should keep optional-chain insert text');
+        });
+
+        it('should provide completion for this alias _t. with mapState', async () => {
+            const text = `<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count'])
+  },
+  created() {
+    const _t = this;
+    _t.
+  }
+}
+</script>`;
+            const position = { line: 8, character: 7 } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for _t.');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find mapped state "count" for _t alias');
+        });
+
+        it('should provide completion for this alias _t?. with mapState', async () => {
+            const text = `<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count'])
+  },
+  created() {
+    const _t = this;
+    _t?.
+  }
+}
+</script>`;
+            const position = { line: 8, character: 8 } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for _t?.');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find mapped state "count" for _t optional alias');
+            assert.strictEqual(countItem.filterText, '?.count', 'Optional-chain mapped completion should use optional-chain filterText for alias');
         });
 
         it('should provide completion for this. with mapGetters', async () => {
@@ -1312,6 +1388,30 @@ export default {
             assert.ok(items && items.length > 0, 'Should provide completion items for vm. with incomplete code');
             const doubleCountItem = items.find((i: any) => i.label === 'doubleCount');
             assert.ok(doubleCountItem, 'Should find mapped getter "doubleCount" even with incomplete vm.');
+        });
+
+        it('should handle this alias _t?. at end of line', async () => {
+            const text = `<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count'])
+  },
+  created() {
+    const _t = this
+    _t?.
+  }
+}
+</script>`;
+            const position = { line: 8, character: 8 } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for _t?. with incomplete code');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find mapped state "count" even with incomplete _t?.');
         });
 
         it('should handle empty string in mapHelper array', async () => {

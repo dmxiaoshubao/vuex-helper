@@ -47,9 +47,16 @@ export class ComponentMapper {
         // 预处理：修复不完整的代码，使其能够被解析
         let processedContent = scriptContent;
 
-        // 修复行末的 `this.` / `vm.` / `this?.` / `vm?.` 后面没有属性名的情况
-        processedContent = processedContent.replace(/(this|vm)\?\.\s*$/gm, '$1?.__placeholder__');
-        processedContent = processedContent.replace(/(this|vm)\.\s*$/gm, '$1.__placeholder__');
+        // 修复行末的 `this.` / `this?.` 及其别名（如 `_t.` / `_t?.`）后面没有属性名的情况
+        const thisAliasPattern = this.buildThisAliasPattern(scriptContent);
+        processedContent = processedContent.replace(
+            new RegExp(`(^|[^\\w$])(${thisAliasPattern})\\?\\.\\s*$`, 'gm'),
+            '$1$2?.__placeholder__'
+        );
+        processedContent = processedContent.replace(
+            new RegExp(`(^|[^\\w$])(${thisAliasPattern})\\.\\s*$`, 'gm'),
+            '$1$2.__placeholder__'
+        );
 
         // 修复 mapHelper 数组中的空字符串参数
         // 如 mapState([""]) -> mapState(["__placeholder__"])
@@ -382,5 +389,20 @@ export class ComponentMapper {
             if (!firstKey) break;
             this.cache.delete(firstKey);
         }
+    }
+
+    private buildThisAliasPattern(scriptContent: string): string {
+        const aliases = new Set<string>(['this', 'vm']);
+        const aliasRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = aliasRegex.exec(scriptContent)) !== null) {
+            if (match[1]) aliases.add(match[1]);
+        }
+
+        return Array.from(aliases)
+            .sort((a, b) => b.length - a.length)
+            .map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('|');
     }
 }

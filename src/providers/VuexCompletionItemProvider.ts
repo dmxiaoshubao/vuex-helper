@@ -410,11 +410,17 @@ export class VuexCompletionItemProvider
     const lineText = document.lineAt(position.line).text;
     const prefix = lineText.substring(0, position.character);
     const normalizedPrefix = prefix.replace(/\?\./g, ".");
+    const textBeforeCursor = document
+      .getText()
+      .slice(0, document.offsetAt(position));
+    const thisLikePattern = this.buildThisLikePattern(textBeforeCursor);
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
     // 匹配到开始引号为止，后面的内容（包括可能的结束引号）通过 prefix 来确定
     const storeBracketMatch = normalizedPrefix.match(
-      /(?:this|vm)\.\$store\.(state|getters)\[['"]([^'"]*)/,
+      new RegExp(
+        `(?:${thisLikePattern})\\.\\$store\\.(state|getters)\\[['"]([^'"]*)`,
+      ),
     );
 
     if (storeBracketMatch) {
@@ -499,7 +505,9 @@ export class VuexCompletionItemProvider
 
     // 2b. Match this.$store.state.xxx or this.$store.getters.xxx (支持多级访问)
     const storePropertyMatch = normalizedPrefix.match(
-      /(?:this|vm)\.\$store\.(state|getters)\.([\w\.\/]*)$/,
+      new RegExp(
+        `(?:${thisLikePattern})\\.\\$store\\.(state|getters)\\.([\\w\\.\\/]*)$`,
+      ),
     );
 
     if (storePropertyMatch) {
@@ -587,7 +595,7 @@ export class VuexCompletionItemProvider
 
     // 3. this.$store. completion (state, getters, commit, dispatch)
     const storeMatch = normalizedPrefix.match(
-      /(?:this|vm)\.\$store\.([a-zA-Z0-9_$]*)$/,
+      new RegExp(`(?:${thisLikePattern})\\.\\$store\\.([a-zA-Z0-9_$]*)$`),
     );
 
     if (storeMatch) {
@@ -725,10 +733,14 @@ export class VuexCompletionItemProvider
     }
 
     // 4. this.xxx or vm.xxx completion (mapped properties)
-    const match = normalizedPrefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
+    const match = normalizedPrefix.match(
+      new RegExp(`(?:${thisLikePattern})\\.([a-zA-Z0-9_$]*)$`),
+    );
 
     // 4b. this['xxx'] or vm['xxx'] bracket notation completion
-    const bracketMatch = normalizedPrefix.match(/(?:this|vm)\[['"]([^'"]*)$/);
+    const bracketMatch = normalizedPrefix.match(
+      new RegExp(`(?:${thisLikePattern})\\[['"]([^'"]*)$`),
+    );
 
     if (match || bracketMatch) {
       const mapping = this.componentMapper.getMapping(document);
@@ -1044,5 +1056,26 @@ export class VuexCompletionItemProvider
     else if (type === "getter") return storeMap.getters.find(matchItem);
     else if (type === "state") return storeMap.state.find(matchItem);
     return undefined;
+  }
+
+  private buildThisLikePattern(textBeforeCursor: string): string {
+    const names = this.collectThisLikeNames(textBeforeCursor);
+    return names
+      .sort((a, b) => b.length - a.length)
+      .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+  }
+
+  private collectThisLikeNames(textBeforeCursor: string): string[] {
+    const names = new Set<string>(["this", "vm"]);
+    const aliasRegex =
+      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = aliasRegex.exec(textBeforeCursor)) !== null) {
+      if (match[1]) names.add(match[1]);
+    }
+
+    return Array.from(names);
   }
 }
