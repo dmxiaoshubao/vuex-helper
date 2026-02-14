@@ -36,4 +36,12 @@ describe('PathResolver Security', () => {
         const resolved = resolver.resolve('../../outside', path.join(workspace, 'src', 'main.js'));
         assert.strictEqual(resolved, null, 'Resolver should reject paths outside workspace');
     });
+
+    it('should not match alias by loose prefix', () => {
+        const workspace = createWorkspace();
+        const resolver = new PathResolver(workspace);
+
+        const resolved = resolver.resolve('@foo/store/index', path.join(workspace, 'src', 'main.js'));
+        assert.strictEqual(resolved, null, 'Alias @/* should not match @foo/*');
+    });
 });

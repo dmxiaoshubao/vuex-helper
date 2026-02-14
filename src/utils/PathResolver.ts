@@ -47,7 +47,12 @@ export class PathResolver {
         for (const alias in this.aliasMap) {
             // Remove wildcard *
             const aliasPrefix = alias.replace('/*', '');
-            if (importPath.startsWith(aliasPrefix)) {
+            const isWildcardAlias = alias.endsWith('/*');
+            const isExactMatch = importPath === aliasPrefix;
+            const isNestedMatch = importPath.startsWith(`${aliasPrefix}/`);
+            const matchesAlias = isWildcardAlias ? (isExactMatch || isNestedMatch) : isExactMatch;
+
+            if (matchesAlias) {
                 const paths = this.aliasMap[alias];
                 for (const p of paths) {
                     // Remove wildcard * from target path and join with workspace root

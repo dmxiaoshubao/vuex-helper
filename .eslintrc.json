@@ -1,0 +1,24 @@
+{
+  "root": true,
+  "env": {
+    "es2022": true,
+    "node": true,
+    "mocha": true
+  },
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "plugins": [
+    "@typescript-eslint"
+  ],
+  "ignorePatterns": [
+    "out/**",
+    "dist/**"
+  ],
+  "rules": {
+    "no-unreachable": "error",
+    "no-unsafe-finally": "error"
+  }
+}
