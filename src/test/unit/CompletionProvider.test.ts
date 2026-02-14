@@ -87,6 +87,81 @@ class MockStoreIndexer extends StoreIndexer {
     getNamespace() { return undefined; }
 }
 
+class ScopedMockStoreIndexer extends StoreIndexer {
+    constructor() { super(''); }
+    getStoreMap() {
+        return {
+            state: [
+                { name: 'count', modulePath: [], defLocation: {} as any },
+                { name: 'info', modulePath: ['user'], defLocation: {} as any }
+            ],
+            getters: [],
+            mutations: [
+                { name: 'SET_NAME', modulePath: ['user'], defLocation: {} as any },
+                { name: 'SET_NAME', modulePath: ['others'], defLocation: {} as any }
+            ],
+            actions: [
+                { name: 'fetchProfile', modulePath: ['user'], defLocation: {} as any },
+                { name: 'fetchProfile', modulePath: ['others'], defLocation: {} as any }
+            ]
+        };
+    }
+    getNamespace() { return ['user']; }
+}
+
+class NamespacedStateMockStoreIndexer extends StoreIndexer {
+    constructor() { super(''); }
+    getStoreMap() {
+        return {
+            state: [
+                { name: 'rootCount', modulePath: [], defLocation: {} as any },
+                { name: 'profile', modulePath: ['userModule'], defLocation: {} as any },
+                { name: 'enabled', modulePath: ['userModule'], defLocation: {} as any }
+            ],
+            getters: [],
+            mutations: [],
+            actions: []
+        };
+    }
+    getNamespace() { return undefined; }
+}
+
+class InModuleNestedStateMockStoreIndexer extends StoreIndexer {
+    constructor() { super(''); }
+    getStoreMap() {
+        return {
+            state: [
+                { name: 'profile', modulePath: ['userModule'], defLocation: {} as any, displayType: 'Object' },
+                { name: 'profile2', modulePath: ['userModule'], defLocation: {} as any, displayType: 'Object' },
+                { name: 'name', modulePath: ['userModule', 'profile2'], defLocation: {} as any, displayType: 'string' }
+            ],
+            getters: [],
+            mutations: [],
+            actions: []
+        };
+    }
+    getNamespace() { return ['userModule']; }
+}
+
+class RootOptionMockStoreIndexer extends StoreIndexer {
+    constructor() { super(''); }
+    getStoreMap() {
+        return {
+            state: [],
+            getters: [],
+            mutations: [
+                { name: 'SET_NAME', modulePath: [], defLocation: {} as any },
+                { name: 'SET_NAME', modulePath: ['user'], defLocation: {} as any }
+            ],
+            actions: [
+                { name: 'fetchProfile', modulePath: [], defLocation: {} as any },
+                { name: 'fetchProfile', modulePath: ['user'], defLocation: {} as any }
+            ]
+        };
+    }
+    getNamespace() { return ['user']; }
+}
+
 describe('VuexCompletionItemProvider', () => {
     let provider: VuexCompletionItemProvider;
 
@@ -170,6 +245,315 @@ describe('VuexCompletionItemProvider', () => {
         assert.ok(items && items.length > 0);
         const countItem = items.find((i: any) => i.label === 'count');
         assert.ok(countItem, 'Require alias mapState should provide root state completion');
+    });
+
+    it('should provide cross-namespace completion for commit first argument when namespace path is typed', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `this.$store.commit('others/`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const othersItem = items.find((i: any) => i.label === 'others/SET_NAME');
+        assert.ok(othersItem, 'Should provide namespaced mutation from another module');
+    });
+
+    it('should use short local mutation name for in-module commit context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function act({ commit }) { commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const localItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(localItem, 'Local commit should suggest short mutation name');
+    });
+
+    it('should use short local action name for in-module dispatch context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function act({ dispatch }) { dispatch('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const localItem = items.find((i: any) => i.label === 'fetchProfile');
+        assert.ok(localItem, 'Local dispatch should suggest short action name');
+    });
+
+    it('should keep namespaced label for this.$store.commit in module file', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `this.$store.commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const storeItem = items.find((i: any) => i.label === 'user/SET_NAME');
+        assert.ok(storeItem, 'this.$store.commit should keep namespaced mutation label');
+    });
+
+    it('should keep namespaced label for this.$store optional chain commit in module file', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `this.$store?.commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const storeItem = items.find((i: any) => i.label === 'user/SET_NAME');
+        assert.ok(storeItem, 'this.$store?.commit should keep namespaced mutation label');
+    });
+
+    it('should keep namespaced label for this alias optional chain dispatch in module file', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `const vm = this; vm.$store?.dispatch('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const storeItem = items.find((i: any) => i.label === 'user/fetchProfile');
+        assert.ok(storeItem, 'this alias + $store?.dispatch should keep namespaced action label');
+    });
+
+    it('should include root mutation labels when commit uses { root: true } option', async () => {
+        const providerWithRoot = new VuexCompletionItemProvider(new RootOptionMockStoreIndexer());
+        const text = `function action({ commit }) { commit('SET_NAME', null, { root: true }) }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => char,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: char } as any;
+
+        const result = await providerWithRoot.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const rootItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(rootItem, 'Root mutation should be suggested with short root label');
+    });
+
+    it('should include root action labels when dispatch uses { root: true } option', async () => {
+        const providerWithRoot = new VuexCompletionItemProvider(new RootOptionMockStoreIndexer());
+        const text = `function action({ dispatch }) { dispatch('fetchProfile', null, { root: true }) }`;
+        const char = text.indexOf('fetchProfile') + 2;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => char,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: char } as any;
+
+        const result = await providerWithRoot.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const rootItem = items.find((i: any) => i.label === 'fetchProfile');
+        assert.ok(rootItem, 'Root action should be suggested with short root label');
+    });
+
+    it('should include root labels when commit root option is far from first arg', async () => {
+        const providerWithRoot = new VuexCompletionItemProvider(new RootOptionMockStoreIndexer());
+        const filler = 'x'.repeat(320);
+        const text = `function action({ commit }) { commit('SET_NAME', ${filler}, { root: true }) }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => char,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: char } as any;
+
+        const result = await providerWithRoot.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const rootItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(rootItem, 'Long-distance root option should still expose root mutation label');
+    });
+
+    it('should support commit alias from destructuring in module context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action({ commit: c }) { c('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const localItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(localItem, 'Alias commit should suggest local mutation');
+    });
+
+    it('should support commit alias from member assignment in module context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action(ctx) { const c = ctx.commit; c('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const localItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(localItem, 'Member alias commit should suggest local mutation');
+    });
+
+    it('should support dispatch alias with options variable root true', async () => {
+        const providerWithRoot = new VuexCompletionItemProvider(new RootOptionMockStoreIndexer());
+        const text = `const opts = { root: true }; function action({ dispatch: d }) { d('fetchProfile', null, opts) }`;
+        const char = text.indexOf('fetchProfile') + 2;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => char,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: char } as any;
+
+        const result = await providerWithRoot.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const rootItem = items.find((i: any) => i.label === 'fetchProfile');
+        assert.ok(rootItem, 'Alias dispatch with opts root true should expose root action');
+    });
+
+    it('should provide local module state completion for createNamespacedHelpers mapState callback', async () => {
+        const nsProvider = new VuexCompletionItemProvider(new NamespacedStateMockStoreIndexer());
+        const text =
+            `import { createNamespacedHelpers } from 'vuex'; ` +
+            `const { mapState: mapUserState } = createNamespacedHelpers('userModule'); ` +
+            `const c = { computed: { ...mapUserState({ profileName: state => state. }) } };`;
+        const cursor = text.lastIndexOf('state.') + 'state.'.length;
+        const document = {
+            fileName: '/mock/workspace/src/components/App.vue',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await nsProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const profileItem = items.find((i: any) => i.label === 'profile');
+        assert.ok(profileItem, 'Should suggest module local state "profile"');
+
+        const moduleItem = items.find((i: any) => i.label === 'userModule');
+        assert.ok(!moduleItem, 'Should not suggest namespace name itself in namespaced mapState callback');
+    });
+
+    it('should provide local module state completion for mapState namespace callback', async () => {
+        const nsProvider = new VuexCompletionItemProvider(new NamespacedStateMockStoreIndexer());
+        const text = `...mapState('userModule', { profileName: state => state. })`;
+        const cursor = text.lastIndexOf('state.') + 'state.'.length;
+        const document = {
+            fileName: '/mock/workspace/src/components/App.vue',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await nsProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+
+        const profileItem = items.find((i: any) => i.label === 'profile');
+        assert.ok(profileItem, 'Should suggest module local state "profile"');
+    });
+
+    it('should provide nested in-module state completion for state.profile2.', async () => {
+        const providerInModule = new VuexCompletionItemProvider(new InModuleNestedStateMockStoreIndexer());
+        const text = `function mutate(state){ state.profile2. }`;
+        const cursor = text.indexOf('state.profile2.') + 'state.profile2.'.length;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/userModule.js',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await providerInModule.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items);
+        const nameItem = items.find((i: any) => i.label === 'name');
+        assert.ok(nameItem, 'Should suggest nested leaf state name');
+    });
+
+    it('should not suggest missing nested leaf for state.profile.', async () => {
+        const providerInModule = new VuexCompletionItemProvider(new InModuleNestedStateMockStoreIndexer());
+        const text = `function mutate(state){ state.profile. }`;
+        const cursor = text.indexOf('state.profile.') + 'state.profile.'.length;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/userModule.js',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await providerInModule.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items);
+        const nameItem = items.find((i: any) => i.label === 'name');
+        assert.ok(!nameItem, 'Should not suggest name when nested leaf does not exist');
     });
 
     it('should provide key-value completion for object syntax', async () => {
@@ -525,6 +909,20 @@ describe('VuexCompletionItemProvider', () => {
             assert.ok(userModule, 'Should find module "user"');
         });
 
+        it('should provide completion for this?.$store?.state.', async () => {
+            const text = `this?.$store?.state.`;
+            const position = { line: 0, character: text.length } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find root state "count"');
+            assert.strictEqual(countItem.filterText, '.count', 'Store state member completion should keep dot-prefixed filterText');
+        });
+
         it('should provide completion for this.$store.state.user.', async () => {
             const text = `this.$store.state.user.`;
             const position = { line: 0, character: text.length } as any;
@@ -620,6 +1018,33 @@ export default {
             const countItem = items.find((i: any) => i.label === 'count');
             assert.ok(countItem, 'Should find mapped state "count"');
             assert.ok(countItem.detail?.includes('[Vuex Mapped]'), 'Should have Vuex Mapped detail');
+        });
+
+        it('should provide completion for this?. with mapState', async () => {
+            const text = `<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count'])
+  },
+  created() {
+    this?.
+  }
+}
+</script>`;
+            const position = { line: 7, character: 10 } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for this?.');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find mapped state "count"');
+            assert.ok(countItem.detail?.includes('[Vuex Mapped]'), 'Should have Vuex Mapped detail');
+            assert.strictEqual(countItem.filterText, '?.count', 'Optional-chain mapped completion should use optional-chain filterText');
+            assert.strictEqual(countItem.sortText, '\u0000\u0000\u0000count', 'Optional-chain mapped completion should boost sort priority');
+            assert.strictEqual(countItem.insertText, '?.count', 'Optional-chain mapped completion should keep optional-chain insert text');
         });
 
         it('should provide completion for this. with mapGetters', async () => {
@@ -838,6 +1263,29 @@ export default {
             assert.ok(items && items.length > 0, 'Should provide completion items for this. with incomplete code');
             const countItem = items.find((i: any) => i.label === 'count');
             assert.ok(countItem, 'Should find mapped state "count" even with incomplete this.');
+        });
+
+        it('should handle this?. at end of line', async () => {
+            const text = `<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState(['count'])
+  },
+  created() {
+    this?.
+  }
+}
+</script>`;
+            const position = { line: 7, character: 10 } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for this?. with incomplete code');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find mapped state "count" even with incomplete this?.');
         });
 
         it('should handle vm. at end of line', async () => {

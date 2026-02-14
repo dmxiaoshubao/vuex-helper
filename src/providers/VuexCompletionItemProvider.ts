@@ -33,6 +33,26 @@ export class VuexCompletionItemProvider
     const vuexContext = this.contextScanner.getContext(document, position);
 
     if (vuexContext && vuexContext.type !== "unknown") {
+      const contextLineText = document.lineAt(position.line).text;
+      const contextPrefix = contextLineText.substring(0, position.character);
+      const callName =
+        vuexContext.method === "commit" || vuexContext.method === "dispatch"
+          ? (vuexContext.calleeName || vuexContext.method).trim()
+          : "";
+      const escapedCallName = callName
+        ? callName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        : "";
+      const commitDispatchArgMatch =
+        vuexContext.method === "commit" || vuexContext.method === "dispatch"
+          ? contextPrefix.match(new RegExp(`${escapedCallName}\\(\\s*['"]([^'"]*)$`))
+          : null;
+      const hasExplicitNamespaceInput =
+        !!commitDispatchArgMatch && commitDispatchArgMatch[1].includes("/");
+      const hasRootTrueOption =
+        vuexContext.method === "commit" || vuexContext.method === "dispatch"
+          ? this.hasRootTrueOption(document, position, vuexContext.method, vuexContext.calleeName)
+          : false;
+
       let items: {
         name: string;
         documentation?: string;
@@ -114,7 +134,9 @@ export class VuexCompletionItemProvider
           items = items.filter((i) => i.modulePath.join("/") === ns);
         } else if (
           currentNamespace &&
-          (vuexContext.type === "mutation" || vuexContext.type === "action")
+          (vuexContext.type === "mutation" || vuexContext.type === "action") &&
+          !hasRootTrueOption &&
+          !(hasExplicitNamespaceInput && (vuexContext.method === "commit" || vuexContext.method === "dispatch"))
         ) {
           // If inside a module, scoped completion for commit/dispatch
           // Filter to only current module items (Strict scoping as per user request)
@@ -220,8 +242,13 @@ export class VuexCompletionItemProvider
           }
         }
 
-        // Combined path = currentNamespace + relativePath
-        const baseNamespace = currentNamespace || [];
+        // Combined path = helper namespace (if present) + relativePath.
+        // For createNamespacedHelpers/mapState('ns', {...}) callback, `state` is module-local state,
+        // so we must anchor suggestions to that namespace instead of current file namespace.
+        const contextNamespace = vuexContext.namespace
+          ? vuexContext.namespace.split("/").filter(Boolean)
+          : undefined;
+        const baseNamespace = contextNamespace || currentNamespace || [];
         const targetPath = [...baseNamespace, ...relativePath];
 
         // 计算正确的替换范围：从点号位置到光标位置
@@ -237,7 +264,10 @@ export class VuexCompletionItemProvider
 
         const suggestions = new Map<string, vscode.CompletionItem>();
 
-        items.forEach((item) => {
+        // Use full state collection for path traversal. `items` may be pre-filtered for non-property
+        // contexts, which would lose descendant paths in namespaced state callbacks.
+        const stateTraversalItems = storeMap.state;
+        stateTraversalItems.forEach((item) => {
           // Check if item belongs to the target path hierarchy
           // item.modulePath must start with targetPath
 
@@ -294,10 +324,16 @@ export class VuexCompletionItemProvider
 
       const results = items.map((item) => {
         let label = [...item.modulePath, item.name].join("/");
+        const isCommitDispatchArg0 =
+          (vuexContext.method === "commit" || vuexContext.method === "dispatch") &&
+          vuexContext.argumentIndex === 0;
+        const isLocalCommitDispatchArg0 =
+          isCommitDispatchArg0 && !vuexContext.isStoreMethod && !hasRootTrueOption;
         // If inside a module and matches current namespace, use short name
         if (
           currentNamespace &&
-          item.modulePath.join("/") === currentNamespace.join("/")
+          item.modulePath.join("/") === currentNamespace.join("/") &&
+          (!isCommitDispatchArg0 || isLocalCommitDispatchArg0)
         ) {
           label = item.name;
         }
@@ -373,10 +409,11 @@ export class VuexCompletionItemProvider
     // 2. this.$store.state. or this.$store.getters. completion
     const lineText = document.lineAt(position.line).text;
     const prefix = lineText.substring(0, position.character);
+    const normalizedPrefix = prefix.replace(/\?\./g, ".");
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
     // 匹配到开始引号为止，后面的内容（包括可能的结束引号）通过 prefix 来确定
-    const storeBracketMatch = prefix.match(
+    const storeBracketMatch = normalizedPrefix.match(
       /(?:this|vm)\.\$store\.(state|getters)\[['"]([^'"]*)/,
     );
 
@@ -461,7 +498,7 @@ export class VuexCompletionItemProvider
     }
 
     // 2b. Match this.$store.state.xxx or this.$store.getters.xxx (支持多级访问)
-    const storePropertyMatch = prefix.match(
+    const storePropertyMatch = normalizedPrefix.match(
       /(?:this|vm)\.\$store\.(state|getters)\.([\w\.\/]*)$/,
     );
 
@@ -476,6 +513,7 @@ export class VuexCompletionItemProvider
       const pathParts = pathInput.split(".");
       const currentInput = pathParts[pathParts.length - 1] || "";
       const modulePath = pathParts.slice(0, -1);
+      const accessToken = this.getAccessToken(prefix, currentInput.length);
 
       const items: vscode.CompletionItem[] = [];
 
@@ -511,10 +549,12 @@ export class VuexCompletionItemProvider
               position.line,
               position.character,
               currentInput.length,
+              accessToken,
             );
             ci.range = dotRange;
-            ci.insertText = "." + label;
-            ci.filterText = "." + pathInput + label;
+            ci.insertText = accessToken + label;
+            ci.filterText = accessToken + pathInput + label;
+            this.boostOptionalChainPriority(ci, accessToken);
             suggestions.set(label, ci);
           }
         } else {
@@ -531,10 +571,12 @@ export class VuexCompletionItemProvider
               position.line,
               position.character,
               currentInput.length,
+              accessToken,
             );
             ci.range = dotRange;
-            ci.insertText = "." + nextModule;
-            ci.filterText = "." + pathInput + nextModule;
+            ci.insertText = accessToken + nextModule;
+            ci.filterText = accessToken + pathInput + nextModule;
+            this.boostOptionalChainPriority(ci, accessToken);
             suggestions.set(nextModule, ci);
           }
         }
@@ -544,10 +586,13 @@ export class VuexCompletionItemProvider
     }
 
     // 3. this.$store. completion (state, getters, commit, dispatch)
-    const storeMatch = prefix.match(/(?:this|vm)\.\$store\.([a-zA-Z0-9_$]*)$/);
+    const storeMatch = normalizedPrefix.match(
+      /(?:this|vm)\.\$store\.([a-zA-Z0-9_$]*)$/,
+    );
 
     if (storeMatch) {
       const partialInput = storeMatch[1]; // e.g., "d" or "dis" or ""
+      const accessToken = this.getAccessToken(prefix, partialInput.length);
       const items: vscode.CompletionItem[] = [];
 
       // Calculate replacement range to include the dot
@@ -555,6 +600,7 @@ export class VuexCompletionItemProvider
         position.line,
         position.character,
         partialInput.length,
+        accessToken,
       );
 
       // state
@@ -565,8 +611,9 @@ export class VuexCompletionItemProvider
         "Access the Vuex store state tree",
       );
       stateItem.range = replacementRange;
-      stateItem.insertText = ".state";
-      stateItem.filterText = "." + partialInput + "state";
+      stateItem.insertText = `${accessToken}state`;
+      stateItem.filterText = accessToken + partialInput + "state";
+      this.boostOptionalChainPriority(stateItem, accessToken);
       items.push(stateItem);
 
       // getters
@@ -577,8 +624,9 @@ export class VuexCompletionItemProvider
         "Access the Vuex store getters",
       );
       gettersItem.range = replacementRange;
-      gettersItem.insertText = ".getters";
-      gettersItem.filterText = "." + partialInput + "getters";
+      gettersItem.insertText = `${accessToken}getters`;
+      gettersItem.filterText = accessToken + partialInput + "getters";
+      this.boostOptionalChainPriority(gettersItem, accessToken);
       items.push(gettersItem);
 
       // commit
@@ -588,9 +636,12 @@ export class VuexCompletionItemProvider
         "[Vuex Store] Commit mutation",
         "Commit a mutation to the Vuex store",
       );
-      commitItem.insertText = new vscode.SnippetString(".commit($0)");
+      commitItem.insertText = new vscode.SnippetString(
+        `${accessToken}commit($0)`,
+      );
       commitItem.range = replacementRange;
-      commitItem.filterText = "." + partialInput + "commit";
+      commitItem.filterText = accessToken + partialInput + "commit";
+      this.boostOptionalChainPriority(commitItem, accessToken);
       items.push(commitItem);
 
       // dispatch
@@ -600,56 +651,84 @@ export class VuexCompletionItemProvider
         "[Vuex Store] Dispatch action",
         "Dispatch an action to the Vuex store",
       );
-      dispatchItem.insertText = new vscode.SnippetString(".dispatch($0)");
+      dispatchItem.insertText = new vscode.SnippetString(
+        `${accessToken}dispatch($0)`,
+      );
       dispatchItem.range = replacementRange;
-      dispatchItem.filterText = "." + partialInput + "dispatch";
+      dispatchItem.filterText = accessToken + partialInput + "dispatch";
+      this.boostOptionalChainPriority(dispatchItem, accessToken);
       items.push(dispatchItem);
 
       return new vscode.CompletionList(items, false);
     }
 
-    // 3. In-Module State Completion (state.xxx)
-    if (currentNamespace && /\bstate\.$/.test(prefix)) {
-      const nsJoined = currentNamespace.join("/");
-      const items = storeMap.state.filter(
-        (s) => s.modulePath.join("/") === nsJoined,
-      );
+    // 3. In-Module State Completion (state.xxx / state.a.b.xxx)
+    if (currentNamespace) {
+      const inModuleStateMatch = prefix.match(/\bstate\.([a-zA-Z0-9_$\.]*)$/);
+      if (inModuleStateMatch) {
+        const pathInput = inModuleStateMatch[1] || "";
+        const pathParts = pathInput.split(".");
+        const currentInput = pathParts[pathParts.length - 1] || "";
+        const relativePath = pathParts.slice(0, -1).filter(Boolean);
+        const targetPath = [...currentNamespace, ...relativePath];
 
-      // 计算替换范围，包含点号
-      const dotMatch = prefix.match(/state\.([a-zA-Z0-9_$]*)$/);
-      const partialInput = dotMatch ? dotMatch[1] : "";
-      const replacementRange = this.createDotRange(
-        position.line,
-        position.character,
-        partialInput.length,
-      );
-
-      const completionItems = items.map((item) => {
-        const completionItem = this.createCompletionItem(
-          item.name,
-          vscode.CompletionItemKind.Field,
-          "[Vuex Module] state",
-          item.documentation,
+        const replacementRange = this.createDotRange(
+          position.line,
+          position.character,
+          currentInput.length,
         );
-        completionItem.range = replacementRange;
-        completionItem.insertText = "." + item.name;
-        completionItem.filterText = "." + partialInput + item.name;
 
-        // If we have type info, show it
-        if (item.displayType) {
-          completionItem.detail += ` : ${item.displayType}`;
-        }
-        return completionItem;
-      });
+        const suggestions = new Map<string, vscode.CompletionItem>();
 
-      return new vscode.CompletionList(completionItems, false);
+        storeMap.state.forEach((item: any) => {
+          if (item.modulePath.length < targetPath.length) return;
+          for (let i = 0; i < targetPath.length; i++) {
+            if (item.modulePath[i] !== targetPath[i]) return;
+          }
+
+          const remainingPath = item.modulePath.slice(targetPath.length);
+          if (remainingPath.length === 0) {
+            const label = item.name;
+            if (!suggestions.has(label)) {
+              const completionItem = this.createCompletionItem(
+                label,
+                vscode.CompletionItemKind.Field,
+                "[Vuex Module] state",
+                item.documentation,
+              );
+              completionItem.range = replacementRange;
+              completionItem.insertText = "." + label;
+              completionItem.filterText = "." + pathInput + label;
+              if (item.displayType) {
+                completionItem.detail += ` : ${item.displayType}`;
+              }
+              suggestions.set(label, completionItem);
+            }
+          } else {
+            const nextModule = remainingPath[0];
+            if (!suggestions.has(nextModule)) {
+              const completionItem = this.createCompletionItem(
+                nextModule,
+                vscode.CompletionItemKind.Module,
+                "[Vuex Module] state",
+              );
+              completionItem.range = replacementRange;
+              completionItem.insertText = "." + nextModule;
+              completionItem.filterText = "." + pathInput + nextModule;
+              suggestions.set(nextModule, completionItem);
+            }
+          }
+        });
+
+        return new vscode.CompletionList(Array.from(suggestions.values()), false);
+      }
     }
 
     // 4. this.xxx or vm.xxx completion (mapped properties)
-    const match = prefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
+    const match = normalizedPrefix.match(/(?:this|vm)\.([a-zA-Z0-9_$]*)$/);
 
     // 4b. this['xxx'] or vm['xxx'] bracket notation completion
-    const bracketMatch = prefix.match(/(?:this|vm)\[['"]([^'"]*)$/);
+    const bracketMatch = normalizedPrefix.match(/(?:this|vm)\[['"]([^'"]*)$/);
 
     if (match || bracketMatch) {
       const mapping = this.componentMapper.getMapping(document);
@@ -705,12 +784,14 @@ export class VuexCompletionItemProvider
         // 点号访问: this.xxx
         // Range covering the dot and the identifier typed so far
         const validIdLength = partialInput.length;
+        const accessToken = this.getAccessToken(prefix, validIdLength);
 
         // Range that includes the dot (e.g. ".o")
         const bracketReplacementRange = this.createDotRange(
           position.line,
           position.character,
           validIdLength,
+          accessToken,
         );
 
         for (const localName in mapping) {
@@ -740,19 +821,24 @@ export class VuexCompletionItemProvider
             // We must replace the dot typed by the user.
             item.range = bracketReplacementRange;
             // Ensure filterText allows matching ".foo" against this item
-            item.filterText = "." + localName;
+            item.filterText = accessToken + localName;
+            this.boostOptionalChainPriority(item, accessToken);
 
             // Escape quotes in name just in case
             const safeName = localName.replace(/'/g, "\\'");
 
             // 不自动添加 ()，让用户自己填写
-            item.insertText = `['${safeName}']`;
+            item.insertText =
+              accessToken === "?."
+                ? `?.['${safeName}']`
+                : `['${safeName}']`;
           } else {
             // 普通映射属性
             item.range = bracketReplacementRange;
-            item.filterText = "." + localName;
+            item.filterText = accessToken + localName;
+            this.boostOptionalChainPriority(item, accessToken);
             // 不自动添加括号，避免与用户已输入的括号冲突
-            item.insertText = "." + localName;
+            item.insertText = accessToken + localName;
           }
 
           items.push(item);
@@ -789,13 +875,40 @@ export class VuexCompletionItemProvider
     line: number,
     cursorChar: number,
     inputLength: number,
+    accessToken: "." | "?." = ".",
   ): vscode.Range {
+    const accessTokenLength = accessToken.length;
     return new vscode.Range(
       line,
-      cursorChar - inputLength - 1,
+      cursorChar - inputLength - accessTokenLength,
       line,
       cursorChar,
     );
+  }
+
+  /** 判断当前访问链使用的是 `.` 还是 `?.`，用于提升补全排序权重 */
+  private getAccessToken(prefix: string, inputLength: number): "." | "?." {
+    const dotIndex = prefix.length - inputLength - 1;
+    if (
+      dotIndex >= 1 &&
+      prefix.charAt(dotIndex) === "." &&
+      prefix.charAt(dotIndex - 1) === "?"
+    ) {
+      return "?.";
+    }
+    return ".";
+  }
+
+  /** 可选链访问时，进一步提前 Vuex 补全项排序 */
+  private boostOptionalChainPriority(
+    item: vscode.CompletionItem,
+    accessToken: "." | "?.",
+  ): void {
+    if (accessToken !== "?.") return;
+    const labelText =
+      typeof item.label === "string" ? item.label : item.label.label;
+    item.sortText = `\u0000\u0000\u0000${labelText}`;
+    item.preselect = true;
   }
 
   /** 扫描光标右侧的空格数量和结束符号 */
@@ -822,25 +935,107 @@ export class VuexCompletionItemProvider
       : item.name;
   }
 
+  private hasRootTrueOption(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    method: "commit" | "dispatch",
+    calleeName?: string,
+  ): boolean {
+    const source = document.getText();
+    const offset = document.offsetAt(position);
+    const start = Math.max(0, offset - 2000);
+    const end = Math.min(source.length, offset + 2000);
+    const windowText = source.substring(start, end);
+    const callName = (calleeName || method).trim();
+    const escapedCallName = callName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedMethod = method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const literalPattern = new RegExp(
+      `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`,
+    );
+    if (literalPattern.test(windowText)) {
+      return true;
+    }
+
+    const thirdArgIdentifierPattern = new RegExp(
+      `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1300}?,[\\s\\S]{0,500}?,\\s*([A-Za-z_$][\\w$]*)\\s*\\)`,
+      "g",
+    );
+    const identifiers = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = thirdArgIdentifierPattern.exec(windowText)) !== null) {
+      if (match[1]) identifiers.add(match[1]);
+    }
+    if (identifiers.size === 0) return false;
+
+    for (const id of identifiers) {
+      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const declPattern = new RegExp(
+        `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`,
+      );
+      if (declPattern.test(windowText)) {
+        return true;
+      }
+      const assignPattern = new RegExp(
+        `\\b${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`,
+      );
+      if (assignPattern.test(windowText)) {
+        return true;
+      }
+      // allow helper call result like buildOpts({ root: true }) assigned to opts
+      const methodLikePattern = new RegExp(
+        `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*[A-Za-z_$][\\w$]*\\([\\s\\S]{0,300}?\\broot\\s*:\\s*true\\b`,
+      );
+      if (methodLikePattern.test(windowText)) {
+        return true;
+      }
+    }
+
+    // conservative fallback for alias confusion: if direct method call exists with literal root:true
+    const fallbackPattern = new RegExp(
+      `${escapedMethod}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`,
+    );
+    return fallbackPattern.test(windowText);
+  }
+
   private findStoreItem(
     name: string,
     type: string,
     namespace: string | undefined,
     storeMap: any,
   ) {
+    let lookupName = name;
+    let lookupNamespace = namespace;
+    if (type === "state" && lookupName.includes(".")) {
+      const parts = lookupName.split(".").filter(Boolean);
+      const leaf = parts.pop();
+      if (leaf) {
+        lookupName = leaf;
+        const nestedNs = parts.join("/");
+        if (nestedNs) {
+          lookupNamespace = lookupNamespace
+            ? `${lookupNamespace}/${nestedNs}`
+            : nestedNs;
+        }
+      }
+    }
+
     const matchItem = (item: { name: string; modulePath: string[] }) => {
-      if (namespace) {
-        return item.name === name && item.modulePath.join("/") === namespace;
+      if (lookupNamespace) {
+        return (
+          item.name === lookupName &&
+          item.modulePath.join("/") === lookupNamespace
+        );
       } else {
-        if (name.includes("/")) {
-          const parts = name.split("/");
+        if (lookupName.includes("/")) {
+          const parts = lookupName.split("/");
           const realName = parts.pop()!;
           const namespaceStr = parts.join("/");
           return (
             item.name === realName && item.modulePath.join("/") === namespaceStr
           );
         }
-        return item.name === name;
+        return item.name === lookupName;
       }
     };
 

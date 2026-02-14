@@ -47,7 +47,8 @@ export class ComponentMapper {
         // 预处理：修复不完整的代码，使其能够被解析
         let processedContent = scriptContent;
 
-        // 修复行末的 `this.` 或 `vm.` 后面没有属性名的情况
+        // 修复行末的 `this.` / `vm.` / `this?.` / `vm?.` 后面没有属性名的情况
+        processedContent = processedContent.replace(/(this|vm)\?\.\s*$/gm, '$1?.__placeholder__');
         processedContent = processedContent.replace(/(this|vm)\.\s*$/gm, '$1.__placeholder__');
 
         // 修复 mapHelper 数组中的空字符串参数
@@ -175,7 +176,7 @@ export class ComponentMapper {
             });
 
             traverse(ast, {
-                CallExpression(path: any) {
+                CallExpression: (path: any) => {
                     const callee = path.node.callee;
                     let calleeName: string | undefined;
                     let inferredNamespace: string | undefined;
@@ -255,11 +256,23 @@ export class ComponentMapper {
                                         prop.value.type === 'FunctionExpression'
                                     ) {
                                         // mapState({ local: state => state.xxx }) / method wrapper variants
-                                        mapping[localName] = { type: type!, originalName: localName, namespace };
+                                        const inferredStateName =
+                                            type === 'state' ? this.inferStatePropertyNameFromFunction(prop.value) : undefined;
+                                        mapping[localName] = {
+                                            type: type!,
+                                            originalName: inferredStateName || localName,
+                                            namespace
+                                        };
                                     }
                                 } else if (prop.type === 'ObjectMethod') {
                                     const localName = prop.key.name || prop.key.value;
-                                    mapping[localName] = { type: type!, originalName: localName, namespace };
+                                    const inferredStateName =
+                                        type === 'state' ? this.inferStatePropertyNameFromFunction(prop) : undefined;
+                                    mapping[localName] = {
+                                        type: type!,
+                                        originalName: inferredStateName || localName,
+                                        namespace
+                                    };
                                 }
                             });
                         }
@@ -291,6 +304,76 @@ export class ComponentMapper {
 
     public getCacheSize(): number {
         return this.cache.size;
+    }
+
+    private inferStatePropertyNameFromFunction(fnNode: any): string | undefined {
+        if (!fnNode || !Array.isArray(fnNode.params) || fnNode.params.length === 0) {
+            return undefined;
+        }
+
+        const firstParam = fnNode.params[0];
+        if (!firstParam || firstParam.type !== 'Identifier' || !firstParam.name) {
+            return undefined;
+        }
+
+        const stateParamName = firstParam.name;
+        const expr = this.extractReturnedExpressionFromFunction(fnNode);
+        if (!expr) {
+            return undefined;
+        }
+
+        return this.inferStatePropertyFromExpression(expr, stateParamName);
+    }
+
+    private extractReturnedExpressionFromFunction(fnNode: any): any | undefined {
+        if (!fnNode) return undefined;
+
+        if (fnNode.type === 'ArrowFunctionExpression' && fnNode.body && fnNode.body.type !== 'BlockStatement') {
+            return fnNode.body;
+        }
+
+        const body = fnNode.body && fnNode.body.type === 'BlockStatement' ? fnNode.body.body : [];
+        for (const statement of body) {
+            if (statement.type === 'ReturnStatement' && statement.argument) {
+                return statement.argument;
+            }
+        }
+        return undefined;
+    }
+
+    private inferStatePropertyFromExpression(expr: any, stateParamName: string): string | undefined {
+        let current = expr;
+
+        // Unwrap wrappers to keep the extraction tolerant while editing.
+        while (current && (current.type === 'TSAsExpression' || current.type === 'TSTypeAssertion' || current.type === 'ParenthesizedExpression' || current.type === 'ChainExpression')) {
+            current = current.expression;
+        }
+
+        if (!current) return undefined;
+
+        const segments: string[] = [];
+        let cursor = current;
+        while (cursor && (cursor.type === 'MemberExpression' || cursor.type === 'OptionalMemberExpression')) {
+            const propertyNode = cursor.property;
+            if (!propertyNode) return undefined;
+
+            let propName: string | undefined;
+            if (!cursor.computed && propertyNode.type === 'Identifier') {
+                propName = propertyNode.name;
+            } else if (cursor.computed && propertyNode.type === 'StringLiteral') {
+                propName = propertyNode.value;
+            }
+            if (!propName) return undefined;
+
+            segments.unshift(propName);
+            cursor = cursor.object;
+        }
+
+        if (!cursor || cursor.type !== 'Identifier' || cursor.name !== stateParamName) {
+            return undefined;
+        }
+
+        return segments.join('.');
     }
 
     private trimCache(): void {
