@@ -16,6 +16,7 @@ export interface ComponentMapInfo {
 
 export class ComponentMapper {
     
+    private readonly maxCacheEntries = 100;
     private cache: Map<string, { version: number, mapping: ComponentMapInfo }> = new Map();
 
     /**
@@ -25,8 +26,13 @@ export class ComponentMapper {
         const text = document.getText();
         const uri = document.uri.toString();
 
-        // Use cache if document hasn't changed or if current parse fails
         const cached = this.cache.get(uri);
+        if (cached && cached.version === document.version) {
+            // Touch entry for basic LRU behavior.
+            this.cache.delete(uri);
+            this.cache.set(uri, cached);
+            return cached.mapping;
+        }
 
         // For Vue files, extract script content
         let scriptContent = text;
@@ -140,11 +146,24 @@ export class ComponentMapper {
 
             // Success, update cache
             this.cache.set(uri, { version: document.version, mapping });
+            this.trimCache();
             return mapping;
 
         } catch (e) {
             // If failed (highly unlikely with errorRecovery, but still), return cache
             return cached ? cached.mapping : {};
+        }
+    }
+
+    public getCacheSize(): number {
+        return this.cache.size;
+    }
+
+    private trimCache(): void {
+        while (this.cache.size > this.maxCacheEntries) {
+            const firstKey = this.cache.keys().next().value;
+            if (!firstKey) break;
+            this.cache.delete(firstKey);
         }
     }
 }

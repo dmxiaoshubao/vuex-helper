@@ -38,7 +38,7 @@ export class EntryAnalyzer {
             
             // If absolute
             if (path.isAbsolute(configuredEntry)) {
-                 if (fs.existsSync(configuredEntry)) resolvedPath = configuredEntry;
+                 if (this.isAllowedStorePath(configuredEntry)) resolvedPath = configuredEntry;
             } else {
                  // Try alias first
                  resolvedPath = this.pathResolver.resolve(configuredEntry, path.join(this.workspaceRoot, 'package.json')); // Dummy context
@@ -46,11 +46,11 @@ export class EntryAnalyzer {
                  // If not alias, try workspace relative
                  if (!resolvedPath) {
                      const abs = path.resolve(this.workspaceRoot, configuredEntry);
-                     if (fs.existsSync(abs)) resolvedPath = abs;
+                     if (this.isAllowedStorePath(abs)) resolvedPath = abs;
                  }
             }
             
-            if (resolvedPath && fs.existsSync(resolvedPath)) {
+            if (resolvedPath && this.isAllowedStorePath(resolvedPath)) {
                 console.log(`Using configured store entry: ${resolvedPath}`);
                 return resolvedPath;
             } else {
@@ -104,16 +104,21 @@ export class EntryAnalyzer {
         return null;
     }
 
-    private findEntryFiles(): Promise<string[]> {
-        return new Promise((resolve, reject) => {
-            const pattern = 'src/{main,index}.{js,ts}';
-            glob(pattern, { cwd: this.workspaceRoot, absolute: true }, (err, files) => {
-                if (err) {
-                    return reject(err);
-                }
-                resolve(files);
-            });
-        });
+    private isAllowedStorePath(candidate: string): boolean {
+        if (!fs.existsSync(candidate)) return false;
+        const resolved = path.resolve(candidate);
+        const workspace = path.resolve(this.workspaceRoot);
+        const relative = path.relative(workspace, resolved);
+        const isInsideWorkspace = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+        if (!isInsideWorkspace) return false;
+
+        const stat = fs.statSync(resolved);
+        return stat.isFile();
+    }
+
+    private async findEntryFiles(): Promise<string[]> {
+        const pattern = 'src/{main,index}.{js,ts}';
+        return glob(pattern, { cwd: this.workspaceRoot, absolute: true });
     }
 
     private findStoreInjection(filePath: string): string | null {

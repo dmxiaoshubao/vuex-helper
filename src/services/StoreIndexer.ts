@@ -8,6 +8,8 @@ export class StoreIndexer {
     private entryAnalyzer: EntryAnalyzer;
     private storeParser: StoreParser;
     private storeMap: VuexStoreMap | null = null;
+    private indexingPromise: Promise<void> | null = null;
+    private rerunRequested = false;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -16,6 +18,25 @@ export class StoreIndexer {
     }
 
     public async index() {
+        if (this.indexingPromise) {
+            this.rerunRequested = true;
+            return this.indexingPromise;
+        }
+
+        try {
+            this.indexingPromise = this.performIndex();
+            await this.indexingPromise;
+            while (this.rerunRequested) {
+                this.rerunRequested = false;
+                this.indexingPromise = this.performIndex();
+                await this.indexingPromise;
+            }
+        } finally {
+            this.indexingPromise = null;
+        }
+    }
+
+    private async performIndex() {
         console.log('Starting Vuex Store Indexing...');
         const storePath = await this.entryAnalyzer.analyze();
         if (storePath) {

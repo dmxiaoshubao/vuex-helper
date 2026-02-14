@@ -1,7 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as json5 from 'json5';
-import * as vscode from 'vscode';
 
 export class PathResolver {
     private workspaceRoot: string;
@@ -41,7 +40,7 @@ export class PathResolver {
             // Relative path
             const dir = path.dirname(currentFilePath);
             const absolutePath = path.resolve(dir, importPath);
-            return this.tryExtensions(absolutePath);
+            return this.ensureWorkspacePath(this.tryExtensions(absolutePath));
         }
 
         // Alias path
@@ -55,7 +54,7 @@ export class PathResolver {
                     const targetPrefix = p.replace('/*', '');
                     const rest = importPath.substring(aliasPrefix.length);
                     const absolutePath = path.join(this.workspaceRoot, targetPrefix, rest);
-                    const resolved = this.tryExtensions(absolutePath);
+                    const resolved = this.ensureWorkspacePath(this.tryExtensions(absolutePath));
                     if (resolved) {
                         return resolved;
                     }
@@ -66,7 +65,7 @@ export class PathResolver {
         // Try node_modules or absolute path (less common for source files but possible)
         try {
             const absolutePath = require.resolve(importPath, { paths: [path.dirname(currentFilePath)] });
-            return absolutePath;
+            return this.ensureWorkspacePath(absolutePath);
         } catch (e) {
             // ignore
         }
@@ -88,5 +87,20 @@ export class PathResolver {
             }
         }
         return null; // Not found
+    }
+
+    private ensureWorkspacePath(candidate: string | null): string | null {
+        if (!candidate) return null;
+
+        const workspaceRoot = path.resolve(this.workspaceRoot);
+        const resolvedPath = path.resolve(candidate);
+        const relative = path.relative(workspaceRoot, resolvedPath);
+        const isInsideWorkspace = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+
+        // Allow workspace root files as well.
+        if (relative === '' || isInsideWorkspace) {
+            return resolvedPath;
+        }
+        return null;
     }
 }

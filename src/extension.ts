@@ -3,6 +3,7 @@ import { StoreIndexer } from './services/StoreIndexer';
 import { VuexDefinitionProvider } from './providers/VuexDefinitionProvider';
 import { VuexCompletionItemProvider } from './providers/VuexCompletionItemProvider';
 import { VuexHoverProvider } from './providers/VuexHoverProvider';
+import { ReindexScheduler } from './services/ReindexScheduler';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Activating Vuex Helper...');
@@ -13,15 +14,19 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const storeIndexer = new StoreIndexer(workspaceRoot);
+    const scheduler = new ReindexScheduler(() => {
+        void storeIndexer.index();
+    });
+    context.subscriptions.push(scheduler);
 
     // Initial indexing
-    storeIndexer.index();
+    scheduler.schedule();
 
     // Re-index on file save (throttled in real app, simplified here)
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript' || doc.languageId === 'vue') {
-             // simplified: re-index everything. In reality, check if file is related to store.
-             storeIndexer.index();
+             // Avoid duplicate rebuild storms while user is saving frequently.
+             scheduler.schedule();
         }
     }));
 
@@ -29,7 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('vuexHelper.storeEntry')) {
             console.log('Configuration changed, re-indexing store...');
-            storeIndexer.index();
+            scheduler.schedule();
             vscode.window.showInformationMessage('Vuex Helper: Store configuration updated. Re-indexing...');
         }
     }));

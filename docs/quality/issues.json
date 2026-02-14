@@ -1,0 +1,55 @@
+[
+  {
+    "id": "ISSUE-001",
+    "title": "ComponentMapper 缓存无上限导致内存增长",
+    "type": "memory",
+    "severity": "high",
+    "status": "verified",
+    "impactScope": "src/services/ComponentMapper.ts",
+    "reproduction": "持续打开大量 Vue 文档，缓存 Map 条目持续增加。",
+    "remediation": "新增 LRU 上限（100 条）和同版本缓存命中策略。",
+    "tests": [
+      "src/test/unit/ComponentMapperCache.test.ts"
+    ]
+  },
+  {
+    "id": "ISSUE-002",
+    "title": "路径解析边界缺失导致越界访问风险",
+    "type": "security",
+    "severity": "high",
+    "status": "verified",
+    "impactScope": "src/utils/PathResolver.ts, src/services/EntryAnalyzer.ts",
+    "reproduction": "通过相对路径 ../../ 或外部绝对路径可尝试解析工作区外文件。",
+    "remediation": "新增 workspace 边界检查，仅允许解析工作区内文件。",
+    "tests": [
+      "src/test/unit/PathResolverSecurity.test.ts"
+    ]
+  },
+  {
+    "id": "ISSUE-003",
+    "title": "频繁重建触发并发和资源释放问题",
+    "type": "performance",
+    "severity": "medium",
+    "status": "verified",
+    "impactScope": "src/extension.ts, src/services/StoreIndexer.ts",
+    "reproduction": "频繁保存文件会重复触发索引，可能导致重复计算和定时器资源累积。",
+    "remediation": "引入 ReindexScheduler 防抖并在 StoreIndexer 增加并发合并与最多一次重跑机制。",
+    "tests": [
+      "src/test/unit/ReindexScheduler.test.ts",
+      "src/test/unit/StoreIndexerConcurrency.test.ts"
+    ]
+  },
+  {
+    "id": "DEP-001",
+    "title": "glob@8 依赖风险跟踪",
+    "type": "security",
+    "severity": "medium",
+    "status": "verified",
+    "impactScope": "package.json",
+    "reproduction": "项目原使用 glob 8.x，存在依赖风险跟踪项。",
+    "remediation": "已升级项目直接依赖到 glob 10.x，并完成编译与单元测试回归。",
+    "tests": [
+      "src/test/unit/IssueWorkflow.test.ts"
+    ]
+  }
+]
