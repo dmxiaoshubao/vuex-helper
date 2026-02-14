@@ -87,6 +87,11 @@ export class StoreParser {
         const localVars: Record<string, any> = {};
 
         traverse(ast, {
+            FunctionDeclaration: (path: any) => {
+                if (path.node.id && path.node.id.name) {
+                    localVars[path.node.id.name] = path.node;
+                }
+            },
             VariableDeclarator: (path: any) => {
                 if (path.node.id.type === 'Identifier') {
                     localVars[path.node.id.name] = path.node.init;
@@ -332,7 +337,47 @@ export class StoreParser {
             return this.resolveNode(node.expression, localVars, depth + 1, seen);
         }
 
+        if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+            const calleeName = node.callee.name;
+            if (seen.has(calleeName)) return node;
+
+            const calleeNode = this.resolveNode(localVars[calleeName], localVars, depth + 1, seen);
+            if (
+                calleeNode &&
+                (calleeNode.type === 'FunctionDeclaration' ||
+                    calleeNode.type === 'FunctionExpression' ||
+                    calleeNode.type === 'ArrowFunctionExpression')
+            ) {
+                seen.add(calleeName);
+                const returned = this.resolveFunctionReturnValue(calleeNode, localVars, depth + 1, seen);
+                if (returned) {
+                    return returned;
+                }
+            }
+        }
+
         return node;
+    }
+
+    private resolveFunctionReturnValue(
+        fnNode: any,
+        localVars: Record<string, any>,
+        depth: number,
+        seen: Set<string>
+    ): any {
+        if (!fnNode) return null;
+
+        if (fnNode.type === 'ArrowFunctionExpression' && fnNode.body && fnNode.body.type !== 'BlockStatement') {
+            return this.resolveNode(fnNode.body, localVars, depth + 1, seen);
+        }
+
+        const body = fnNode.body && fnNode.body.type === 'BlockStatement' ? fnNode.body.body : [];
+        for (const statement of body) {
+            if (statement.type === 'ReturnStatement' && statement.argument) {
+                return this.resolveNode(statement.argument, localVars, depth + 1, seen);
+            }
+        }
+        return null;
     }
 
     private async processStoreObject(

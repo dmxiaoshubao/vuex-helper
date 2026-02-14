@@ -129,70 +129,161 @@ export class EntryAnalyzer {
                 plugins: ['typescript', 'jsx'] // Enable TS and JSX support
             });
 
-            let storeImportPath: string | null = null;
-            let storeVariableName: string | null = null;
+            const importMap: Record<string, string> = {};
+            const localVars: Record<string, any> = {};
 
-            // 1. Find `import store from '...'` or `import ...`
             traverse(ast, {
                 ImportDeclaration: (path: any) => {
-                    // Check default specifier
-                    const defaultSpecifier = path.node.specifiers.find((s: any) => s.type === 'ImportDefaultSpecifier');
-                    if (defaultSpecifier) {
-                        // We store the variable name and source, but we don't know if it is THE store yet
-                         // Just storing potential candidates might be complex. 
-                         // Instead, let's find `new Vue` first, get the variable name used for store, 
-                         // and THEN look up the import.
+                    const source = path.node.source?.value;
+                    if (!source) return;
+                    path.node.specifiers.forEach((specifier: any) => {
+                        if (specifier.local?.name) {
+                            importMap[specifier.local.name] = source;
+                        }
+                    });
+                },
+                VariableDeclarator: (path: any) => {
+                    if (path.node.id?.type === 'Identifier') {
+                        localVars[path.node.id.name] = path.node.init;
+                    }
+                },
+                FunctionDeclaration: (path: any) => {
+                    if (path.node.id?.name) {
+                        localVars[path.node.id.name] = path.node;
                     }
                 }
             });
 
-            // Re-traverse to find new Vue({ store })
-            let foundStoreVar = '';
+            let foundStoreRef: any = null;
 
             traverse(ast, {
-                NewExpression(path: any) {
+                NewExpression: (path: any) => {
                     const callee = path.node.callee;
-                    if (callee.type === 'Identifier' && callee.name === 'Vue') {
-                        const args = path.node.arguments;
-                        if (args.length > 0 && args[0].type === 'ObjectExpression') {
-                            const properties = args[0].properties;
-                            for (const prop of properties) {
-                                if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
-                                    if (prop.key.name === 'store') {
-                                        // Found `store: ...` or `store,`
-                                        if (prop.value.type === 'Identifier') {
-                                            foundStoreVar = prop.value.name;
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if (!(callee.type === 'Identifier' && callee.name === 'Vue')) return;
+                    const args = path.node.arguments;
+                    if (!args.length) return;
+
+                    const optionsObject = this.resolveObjectExpression(args[0], localVars, 0, new Set());
+                    if (!optionsObject) return;
+
+                    for (const prop of optionsObject.properties) {
+                        if (prop.type !== 'ObjectProperty') continue;
+                        if (prop.key.type !== 'Identifier' || prop.key.name !== 'store') continue;
+                        foundStoreRef = prop.value;
+                        path.stop();
+                        break;
                     }
                 }
             });
 
-            if (foundStoreVar) {
-                // Now find the import source for this variable
-                traverse(ast, {
-                    ImportDeclaration(path: any) {
-                        const specifiers = path.node.specifiers;
-                        for (const s of specifiers) {
-                            if (s.local.name === foundStoreVar) {
-                                storeImportPath = path.node.source.value;
-                                return; // Stop traversal
-                            }
-                        }
-                    }
-                });
-            }
-
-            if (storeImportPath) {
-                return this.pathResolver.resolve(storeImportPath, filePath);
+            if (foundStoreRef) {
+                return this.resolveStorePathFromNode(foundStoreRef, importMap, localVars, filePath, 0, new Set());
             }
 
         } catch (error) {
             console.error(`Error parsing ${filePath}:`, error);
         }
+        return null;
+    }
+
+    private resolveObjectExpression(
+        node: any,
+        localVars: Record<string, any>,
+        depth: number,
+        seen: Set<string>
+    ): any | null {
+        if (!node || depth > 10) return null;
+
+        if (node.type === 'ObjectExpression') {
+            return node;
+        }
+
+        if (node.type === 'Identifier') {
+            if (seen.has(node.name)) return null;
+            seen.add(node.name);
+            return this.resolveObjectExpression(localVars[node.name], localVars, depth + 1, seen);
+        }
+
+        if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
+            const calleeName = node.callee.name;
+            if (seen.has(calleeName)) return null;
+            seen.add(calleeName);
+            const calleeNode = localVars[calleeName];
+            const returnedObject = this.resolveFunctionReturnObject(calleeNode, localVars, depth + 1, seen);
+            if (returnedObject) {
+                return returnedObject;
+            }
+        }
+
+        if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+            return this.resolveObjectExpression(node.expression, localVars, depth + 1, seen);
+        }
+
+        return null;
+    }
+
+    private resolveFunctionReturnObject(
+        node: any,
+        localVars: Record<string, any>,
+        depth: number,
+        seen: Set<string>
+    ): any | null {
+        if (!node || depth > 10) return null;
+        if (node.type !== 'FunctionDeclaration' && node.type !== 'FunctionExpression' && node.type !== 'ArrowFunctionExpression') {
+            return null;
+        }
+
+        if (node.type === 'ArrowFunctionExpression' && node.body && node.body.type !== 'BlockStatement') {
+            return this.resolveObjectExpression(node.body, localVars, depth + 1, seen);
+        }
+
+        const body = node.body?.type === 'BlockStatement' ? node.body.body : [];
+        for (const statement of body) {
+            if (statement.type === 'ReturnStatement' && statement.argument) {
+                return this.resolveObjectExpression(statement.argument, localVars, depth + 1, seen);
+            }
+        }
+        return null;
+    }
+
+    private resolveStorePathFromNode(
+        node: any,
+        importMap: Record<string, string>,
+        localVars: Record<string, any>,
+        filePath: string,
+        depth: number,
+        seen: Set<string>
+    ): string | null {
+        if (!node || depth > 12) return null;
+
+        if (node.type === 'Identifier') {
+            const name = node.name;
+            if (seen.has(name)) return null;
+            seen.add(name);
+
+            if (importMap[name]) {
+                return this.pathResolver.resolve(importMap[name], filePath);
+            }
+
+            return this.resolveStorePathFromNode(localVars[name], importMap, localVars, filePath, depth + 1, seen);
+        }
+
+        if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require') {
+            const arg0 = node.arguments?.[0];
+            if (arg0 && arg0.type === 'StringLiteral') {
+                return this.pathResolver.resolve(arg0.value, filePath);
+            }
+            return null;
+        }
+
+        if (node.type === 'MemberExpression' && node.object) {
+            return this.resolveStorePathFromNode(node.object, importMap, localVars, filePath, depth + 1, seen);
+        }
+
+        if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+            return this.resolveStorePathFromNode(node.expression, importMap, localVars, filePath, depth + 1, seen);
+        }
+
         return null;
     }
 }
