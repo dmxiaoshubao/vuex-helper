@@ -2,6 +2,25 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [0.1.0] - 2026-02-14
+
+### Added
+
+- **`this` alias completion support**: Added completion support for `const _t = this; _t.` and `_t?.` patterns, including mapped properties and `$store` access chains.
+- **Vuex edge-case coverage**: Added regression tests for optional chaining aliases, namespaced helper combinations, and module-scoped completion behavior.
+
+### Fixed
+
+- **Namespaced completion/definition/hover consistency**: Fixed multiple namespace-related mismatches in completion items, hover info, and go-to-definition.
+- **Nested state leaf resolution**: Definition/hover now resolve exact leaf nodes (e.g., `state.profile.name`) and avoid incorrect parent fallback when leaf keys are absent.
+- **Alias path matching boundary**: Tightened alias resolution to prevent loose-prefix matching issues (e.g., `@/*` no longer matches `@foo/*`).
+
+### Improved
+
+- **Version bump**: Upgraded extension version to `0.1.0` and synchronized lockfile version metadata.
+- **Reindex performance**: Reduced unnecessary reindexing on unrelated file saves and reused shared mapper/cache instances to lower repeated parsing costs.
+- **Runtime signal quality**: Reduced noisy indexing logs and restored lint gate to strengthen release quality checks.
+
 ## [0.0.2] - 2026-02-12
 
 ### Added

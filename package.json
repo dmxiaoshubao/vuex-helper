@@ -3,7 +3,7 @@
   "publisher": "dmxiaoshubao",
   "displayName": "Vuex Helper",
   "description": "Vuex reference jumping, code completion, and hover for Vue 2.",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "icon": "images/icon.png",
   "license": "MIT",
   "repository": {

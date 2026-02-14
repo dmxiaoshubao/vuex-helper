@@ -87,6 +87,18 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 
 ## Release Notes
 
+### 0.1.0
+
+Stability, performance, and Vuex edge-case hardening release:
+
+- **Versioning**: Bumped extension version to `0.1.0` (including lockfile metadata).
+- **Added**: `this` alias completion support (e.g. `const _t = this; _t.` / `_t?.`) for mapped properties and `$store` access.
+- **Fixed**: Namespaced completion/definition/hover behavior in complex module and helper scenarios.
+- **Fixed**: Nested state leaf resolution now prefers exact leaf nodes and avoids unnecessary parent fallback.
+- **Improved**: Reindex strategy now skips unrelated file saves and uses shared mapper/cache instances to reduce redundant parsing.
+- **Improved**: Path alias resolution tightened to avoid loose-prefix matching risk (e.g. `@/*` vs `@foo/*`).
+- **Improved**: Restored lint quality gate and expanded regression tests for optional chaining, alias access, and module-scoped completion.
+
 ### 0.0.2
 
 Enhanced completion features and bug fixes:
