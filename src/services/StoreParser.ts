@@ -51,11 +51,13 @@ export class StoreParser {
 
             const imports = this.collectImports(ast, filePath);
             const localVars = this.collectLocalVars(ast);
+            const storeIdentifiers = this.collectStoreInstanceIdentifiers(ast, localVars);
 
             const exportedObj = this.findExportedStoreObject(ast, localVars);
             if (exportedObj) {
                 await this.processStoreObject(exportedObj, filePath, moduleNamespace, imports, localVars);
             }
+            await this.processDynamicModuleRegistrations(ast, filePath, moduleNamespace, imports, localVars, storeIdentifiers);
         } catch (error) {
             console.error(`Error parsing module ${filePath}:`, error);
         }
@@ -93,6 +95,117 @@ export class StoreParser {
         });
 
         return localVars;
+    }
+
+    private collectStoreInstanceIdentifiers(ast: any, localVars: Record<string, any>): Set<string> {
+        const storeIdentifiers = new Set<string>();
+
+        traverse(ast, {
+            VariableDeclarator: (path: any) => {
+                const id = path.node.id;
+                if (!id || id.type !== 'Identifier') return;
+                const candidate = this.extractStoreObject(path.node.init, localVars);
+                if (candidate) {
+                    storeIdentifiers.add(id.name);
+                }
+            },
+            ExportDefaultDeclaration: (path: any) => {
+                const declaration = path.node.declaration;
+                if (!declaration || declaration.type !== 'Identifier') return;
+                const candidate = this.extractStoreObject(declaration, localVars);
+                if (candidate) {
+                    storeIdentifiers.add(declaration.name);
+                }
+            },
+            AssignmentExpression: (path: any) => {
+                const left = path.node.left;
+                const isModuleExports =
+                    left.type === 'MemberExpression' &&
+                    left.object.type === 'Identifier' &&
+                    left.object.name === 'module' &&
+                    left.property.type === 'Identifier' &&
+                    left.property.name === 'exports';
+                const isExportsDefault =
+                    left.type === 'MemberExpression' &&
+                    left.object.type === 'Identifier' &&
+                    left.object.name === 'exports' &&
+                    left.property.type === 'Identifier' &&
+                    left.property.name === 'default';
+                if (!isModuleExports && !isExportsDefault) return;
+
+                const right = path.node.right;
+                if (!right || right.type !== 'Identifier') return;
+                const candidate = this.extractStoreObject(right, localVars);
+                if (candidate) {
+                    storeIdentifiers.add(right.name);
+                }
+            }
+        });
+
+        return storeIdentifiers;
+    }
+
+    private async processDynamicModuleRegistrations(
+        ast: any,
+        filePath: string,
+        baseNamespace: string[],
+        imports: Record<string, string>,
+        localVars: Record<string, any>,
+        storeIdentifiers: Set<string>
+    ): Promise<void> {
+        if (storeIdentifiers.size === 0) return;
+
+        const registrations: Array<{ namespace: string[]; moduleNode: any }> = [];
+
+        traverse(ast, {
+            CallExpression: (path: any) => {
+                const call = path.node;
+                const callee = call.callee;
+                if (!callee || callee.type !== 'MemberExpression') return;
+                if (callee.computed) return;
+                if (callee.property.type !== 'Identifier' || callee.property.name !== 'registerModule') return;
+                if (callee.object.type !== 'Identifier' || !storeIdentifiers.has(callee.object.name)) return;
+                if (!call.arguments || call.arguments.length < 2) return;
+
+                const namespacePath = this.parseNamespaceArgument(call.arguments[0], localVars);
+                if (!namespacePath || namespacePath.length === 0) return;
+
+                registrations.push({
+                    namespace: [...baseNamespace, ...namespacePath],
+                    moduleNode: call.arguments[1]
+                });
+            }
+        });
+
+        for (const registration of registrations) {
+            await this.processModuleReference(registration.moduleNode, filePath, registration.namespace, imports, localVars);
+        }
+    }
+
+    private parseNamespaceArgument(node: any, localVars: Record<string, any>): string[] | null {
+        const resolved = this.resolveNode(node, localVars, 0, new Set());
+        if (!resolved) return null;
+
+        if (resolved.type === 'StringLiteral') {
+            return [resolved.value];
+        }
+
+        if (resolved.type === 'ArrayExpression') {
+            const namespace: string[] = [];
+            for (const element of resolved.elements || []) {
+                if (!element) return null;
+                const resolvedElement = this.resolveNode(element, localVars, 0, new Set());
+                if (!resolvedElement) return null;
+                if (resolvedElement.type === 'StringLiteral') {
+                    namespace.push(resolvedElement.value);
+                    continue;
+                }
+                return null;
+            }
+            return namespace.length > 0 ? namespace : null;
+        }
+
+        return null;
     }
 
     private findExportedStoreObject(ast: any, localVars: Record<string, any>): any | null {
@@ -435,28 +548,77 @@ export class StoreParser {
             if (!moduleName) continue;
 
             const newNamespace = [...namespace, moduleName];
-            const moduleValue = this.resolveNode(property.value, localVars, 0, new Set());
+            await this.processModuleReference(property.value, filePath, newNamespace, imports, localVars);
+        }
+    }
 
-            if (!moduleValue) continue;
+    private async processModuleReference(
+        moduleNode: any,
+        filePath: string,
+        namespace: string[],
+        imports: Record<string, string>,
+        localVars: Record<string, any>
+    ): Promise<void> {
+        const resolvedModule = this.resolveNode(moduleNode, localVars, 0, new Set());
+        if (!resolvedModule) return;
 
-            if (moduleValue.type === 'ObjectExpression') {
-                await this.processStoreObject(moduleValue, filePath, newNamespace, imports, localVars);
-                continue;
+        if (resolvedModule.type === 'ObjectExpression') {
+            await this.processStoreObject(resolvedModule, filePath, namespace, imports, localVars);
+            return;
+        }
+
+        if (resolvedModule.type === 'Identifier') {
+            const importedPath = this.resolveImportedModulePath(resolvedModule.name, imports, localVars, filePath);
+            if (importedPath) {
+                await this.parseModule(importedPath, namespace);
+                return;
             }
 
-            if (moduleValue.type === 'Identifier') {
-                const importedPath = this.resolveImportedModulePath(moduleValue.name, imports, localVars, filePath);
-                if (importedPath) {
-                    await this.parseModule(importedPath, newNamespace);
-                    continue;
-                }
+            const resolvedLocalValue = this.resolveNode(localVars[resolvedModule.name], localVars, 0, new Set());
+            if (resolvedLocalValue && resolvedLocalValue.type === 'ObjectExpression') {
+                await this.processStoreObject(resolvedLocalValue, filePath, namespace, imports, localVars);
+            }
+            return;
+        }
 
-                const resolvedLocalValue = this.resolveNode(localVars[moduleValue.name], localVars, 0, new Set());
-                if (resolvedLocalValue && resolvedLocalValue.type === 'ObjectExpression') {
-                    await this.processStoreObject(resolvedLocalValue, filePath, newNamespace, imports, localVars);
+        const dynamicPath = this.resolveModulePathFromNode(resolvedModule, localVars, filePath);
+        if (dynamicPath) {
+            await this.parseModule(dynamicPath, namespace);
+        }
+    }
+
+    private resolveModulePathFromNode(node: any, localVars: Record<string, any>, filePath: string): string | null {
+        const resolvedNode = this.resolveNode(node, localVars, 0, new Set());
+        if (!resolvedNode) return null;
+
+        if (
+            resolvedNode.type === 'CallExpression' &&
+            resolvedNode.callee.type === 'Identifier' &&
+            resolvedNode.callee.name === 'require'
+        ) {
+            const arg0 = resolvedNode.arguments && resolvedNode.arguments[0];
+            if (arg0 && arg0.type === 'StringLiteral') {
+                return this.pathResolver.resolve(arg0.value, filePath);
+            }
+            return null;
+        }
+
+        if (resolvedNode.type === 'MemberExpression' && resolvedNode.object) {
+            const objectNode = this.resolveNode(resolvedNode.object, localVars, 0, new Set());
+            if (
+                objectNode &&
+                objectNode.type === 'CallExpression' &&
+                objectNode.callee.type === 'Identifier' &&
+                objectNode.callee.name === 'require'
+            ) {
+                const arg0 = objectNode.arguments && objectNode.arguments[0];
+                if (arg0 && arg0.type === 'StringLiteral') {
+                    return this.pathResolver.resolve(arg0.value, filePath);
                 }
             }
         }
+
+        return null;
     }
 
     private resolveImportedModulePath(
@@ -471,29 +633,7 @@ export class StoreParser {
 
         const localValue = this.resolveNode(localVars[identifier], localVars, 0, new Set());
         if (!localValue) return null;
-
-        if (localValue.type === 'CallExpression' && localValue.callee.type === 'Identifier' && localValue.callee.name === 'require') {
-            const arg0 = localValue.arguments && localValue.arguments[0];
-            if (arg0 && arg0.type === 'StringLiteral') {
-                return this.pathResolver.resolve(arg0.value, filePath);
-            }
-        }
-
-        if (localValue.type === 'MemberExpression' && localValue.object) {
-            const objectNode = localValue.object;
-            if (
-                objectNode.type === 'CallExpression' &&
-                objectNode.callee.type === 'Identifier' &&
-                objectNode.callee.name === 'require'
-            ) {
-                const arg0 = objectNode.arguments && objectNode.arguments[0];
-                if (arg0 && arg0.type === 'StringLiteral') {
-                    return this.pathResolver.resolve(arg0.value, filePath);
-                }
-            }
-        }
-
-        return null;
+        return this.resolveModulePathFromNode(localValue, localVars, filePath);
     }
 
     private extractDocumentation(node: any): string | undefined {
