@@ -586,7 +586,27 @@ export class StoreParser {
         const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
         if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
 
-        for (const property of resolvedValue.properties) {
+        await this.processModulesObjectExpression(resolvedValue, filePath, namespace, imports, localVars);
+    }
+
+    private async processModulesObjectExpression(
+        modulesObject: any,
+        filePath: string,
+        namespace: string[],
+        imports: Record<string, string>,
+        localVars: Record<string, any>
+    ): Promise<void> {
+        if (!modulesObject || modulesObject.type !== 'ObjectExpression') return;
+
+        for (const property of modulesObject.properties) {
+            if (property.type === 'SpreadElement') {
+                const spreadValue = this.resolveNode(property.argument, localVars, 0, new Set());
+                if (spreadValue && spreadValue.type === 'ObjectExpression') {
+                    await this.processModulesObjectExpression(spreadValue, filePath, namespace, imports, localVars);
+                }
+                continue;
+            }
+
             if (property.type !== 'ObjectProperty') continue;
 
             const moduleName = this.getPropertyKeyName(property, localVars);
