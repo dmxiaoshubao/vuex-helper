@@ -8,10 +8,10 @@ export class VuexHoverProvider implements vscode.HoverProvider {
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
 
-    constructor(storeIndexer: StoreIndexer) {
+    constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.contextScanner = new VuexContextScanner();
-        this.componentMapper = new ComponentMapper();
+        this.componentMapper = componentMapper ?? new ComponentMapper();
     }
 
     public async provideHover(

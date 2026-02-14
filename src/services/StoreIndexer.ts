@@ -3,6 +3,10 @@ import { EntryAnalyzer } from './EntryAnalyzer';
 import { StoreParser } from './StoreParser';
 import { VuexStoreMap, VuexStateInfo, VuexGetterInfo, VuexMutationInfo, VuexActionInfo } from '../types';
 
+export interface IndexOptions {
+    interactive?: boolean;
+}
+
 export class StoreIndexer {
     private workspaceRoot: string;
     private entryAnalyzer: EntryAnalyzer;
@@ -10,6 +14,7 @@ export class StoreIndexer {
     private storeMap: VuexStoreMap | null = null;
     private indexingPromise: Promise<void> | null = null;
     private rerunRequested = false;
+    private rerunInteractive = false;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -17,28 +22,33 @@ export class StoreIndexer {
         this.storeParser = new StoreParser(workspaceRoot);
     }
 
-    public async index() {
+    public async index(options: IndexOptions = {}) {
+        const interactive = options.interactive === true;
         if (this.indexingPromise) {
             this.rerunRequested = true;
+            this.rerunInteractive = this.rerunInteractive || interactive;
             return this.indexingPromise;
         }
 
         try {
-            this.indexingPromise = this.performIndex();
+            this.indexingPromise = this.performIndex(interactive);
             await this.indexingPromise;
             while (this.rerunRequested) {
+                const nextInteractive = this.rerunInteractive;
                 this.rerunRequested = false;
-                this.indexingPromise = this.performIndex();
+                this.rerunInteractive = false;
+                this.indexingPromise = this.performIndex(nextInteractive);
                 await this.indexingPromise;
             }
         } finally {
             this.indexingPromise = null;
+            this.rerunInteractive = false;
         }
     }
 
-    private async performIndex() {
+    private async performIndex(interactive: boolean) {
         console.log('Starting Vuex Store Indexing...');
-        const storePath = await this.entryAnalyzer.analyze();
+        const storePath = await this.entryAnalyzer.analyze({ interactive });
         if (storePath) {
             this.storeMap = await this.storeParser.parse(storePath);
             console.log('Store indexing completed.', 
@@ -48,6 +58,8 @@ export class StoreIndexer {
                 `Actions: ${this.storeMap.actions.length}`
             );
         } else {
+            // Avoid stale completion/definition results after store deletion/misconfiguration.
+            this.storeMap = null;
             console.log('No store injection found.');
         }
     }

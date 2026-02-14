@@ -8,10 +8,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
 
-    constructor(storeIndexer: StoreIndexer) {
+    constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.scanner = new VuexContextScanner();
-        this.componentMapper = new ComponentMapper();
+        this.componentMapper = componentMapper ?? new ComponentMapper();
     }
 
     public async provideDefinition(

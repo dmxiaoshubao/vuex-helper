@@ -6,9 +6,15 @@ import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import { PathResolver } from '../utils/PathResolver';
 
+export interface EntryAnalyzeOptions {
+    interactive?: boolean;
+}
+
 export class EntryAnalyzer {
     private workspaceRoot: string;
     private pathResolver: PathResolver;
+    private promptedForMissingStore = false;
+    private warnedInvalidConfiguredEntry = new Set<string>();
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -18,7 +24,8 @@ export class EntryAnalyzer {
     /**
      * Find the main entry file and the store path.
      */
-    public async analyze(): Promise<string | null> {
+    public async analyze(options: EntryAnalyzeOptions = {}): Promise<string | null> {
+        const interactive = options.interactive === true;
         // 0. Check for configuration "vuexHelper.storeEntry"
         const config = vscode.workspace.getConfiguration('vuexHelper');
         const configuredEntry = config.get<string>('storeEntry');
@@ -54,7 +61,10 @@ export class EntryAnalyzer {
                 console.log(`Using configured store entry: ${resolvedPath}`);
                 return resolvedPath;
             } else {
-                vscode.window.showWarningMessage(`Vuex Helper: Configured store entry "${configuredEntry}" not found.`);
+                if (interactive && !this.warnedInvalidConfiguredEntry.has(configuredEntry)) {
+                    this.warnedInvalidConfiguredEntry.add(configuredEntry);
+                    void vscode.window.showWarningMessage(`Vuex Helper: Configured store entry "${configuredEntry}" not found.`);
+                }
                 // Fallback to auto-detection? Or stop? 
                 // Usually if user configures it, they want that. But if it fails, maybe fallback is better than nothing.
                 // But let's fallback to auto-detection with a warning.
@@ -75,6 +85,11 @@ export class EntryAnalyzer {
         
         // If nothing found
         // If nothing found
+        if (!interactive || this.promptedForMissingStore) {
+            return null;
+        }
+        this.promptedForMissingStore = true;
+
         const action = await vscode.window.showInformationMessage(
             'Vuex Helper: Could not find Vuex store entry automatically.', 
             'Configure Path'

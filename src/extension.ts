@@ -4,6 +4,7 @@ import { VuexDefinitionProvider } from './providers/VuexDefinitionProvider';
 import { VuexCompletionItemProvider } from './providers/VuexCompletionItemProvider';
 import { VuexHoverProvider } from './providers/VuexHoverProvider';
 import { ReindexScheduler } from './services/ReindexScheduler';
+import { ComponentMapper } from './services/ComponentMapper';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Activating Vuex Helper...');
@@ -14,13 +15,15 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const storeIndexer = new StoreIndexer(workspaceRoot);
+    const sharedComponentMapper = new ComponentMapper();
     const scheduler = new ReindexScheduler(() => {
-        void storeIndexer.index();
+        // Save/config-driven re-index should not interrupt users with setup prompts.
+        void storeIndexer.index({ interactive: false });
     });
     context.subscriptions.push(scheduler);
 
-    // Initial indexing
-    scheduler.schedule();
+    // Initial indexing: allow one-time interactive guidance if store entry cannot be detected.
+    void storeIndexer.index({ interactive: true });
 
     // Re-index on file save (throttled in real app, simplified here)
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
@@ -42,9 +45,9 @@ export function activate(context: vscode.ExtensionContext) {
     const selector = [{ language: 'vue', scheme: 'file' }, { language: 'javascript', scheme: 'file' }, { language: 'typescript', scheme: 'file' }];
 
     context.subscriptions.push(
-        vscode.languages.registerDefinitionProvider(selector, new VuexDefinitionProvider(storeIndexer)),
-        vscode.languages.registerCompletionItemProvider(selector, new VuexCompletionItemProvider(storeIndexer), "'", '"', '.'),
-        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer))
+        vscode.languages.registerDefinitionProvider(selector, new VuexDefinitionProvider(storeIndexer, sharedComponentMapper)),
+        vscode.languages.registerCompletionItemProvider(selector, new VuexCompletionItemProvider(storeIndexer, sharedComponentMapper), "'", '"', '.'),
+        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper))
     );
     
     console.log('Vuex Helper activated.');
