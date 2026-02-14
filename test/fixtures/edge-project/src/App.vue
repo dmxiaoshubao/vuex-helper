@@ -20,13 +20,14 @@ export default {
     ...mapGetters(['rootDouble']),
     ...mapState('publicModule', ['enabled']),
     ...mapUserState({
-      profileName: state => state.profile.name
+      profileName: state => state.profile.name,
+      profile2: state => state.profile2.name,
     }),
     ...mapUserGetters(['displayName'])
   },
   methods: {
     ...mapMutations(['SET_ROOT', 'TOGGLE']),
-    ...mapActions(['loadRoot', 'trigger']),
+    ...mapActions(['loadRoot', 'trigger', 'userModule/fetchProfile']),
     ...mapUserActions(['fetchProfile']),
     runEdgeScenario() {
       this.SET_ROOT()
@@ -36,7 +37,6 @@ export default {
       this.$store.dispatch('userModule/fetchProfile', 'dispatch-user')
       this.$store.commit('TOGGLE')
       this.$store.dispatch('trigger')
-
       const root = this.$store.state.rootCount
       const userProfile = this.$store.state.userModule.profile.name
       const publicEnabled = this.$store.state.publicModule.enabled

@@ -493,6 +493,17 @@ export class StoreParser {
         }
 
         if (!stateObj || stateObj.type !== 'ObjectExpression') return;
+        this.collectStateProperties(stateObj, filePath, namespace, localVars, []);
+    }
+
+    private collectStateProperties(
+        stateObj: any,
+        filePath: string,
+        moduleNamespace: string[],
+        localVars: Record<string, any>,
+        nestedPath: string[]
+    ): void {
+        if (!stateObj || stateObj.type !== 'ObjectExpression') return;
 
         stateObj.properties.forEach((property: any) => {
             if (property.type !== 'ObjectProperty') return;
@@ -501,16 +512,28 @@ export class StoreParser {
             const loc = this.getPropertyLocation(property);
             if (!keyName || !loc) return;
 
+            const currentPath = [...moduleNamespace, ...nestedPath];
             this.storeMap.state.push({
                 name: keyName,
                 defLocation: new vscode.Location(
                     vscode.Uri.file(filePath),
                     new vscode.Position(loc.start.line - 1, loc.start.column)
                 ),
-                modulePath: namespace,
+                modulePath: currentPath,
                 documentation: this.extractDocumentation(property),
                 displayType: this.inferType(property.value)
             });
+
+            const resolvedValue = this.resolveNode(property.value, localVars, 0, new Set());
+            if (resolvedValue && resolvedValue.type === 'ObjectExpression') {
+                this.collectStateProperties(
+                    resolvedValue,
+                    filePath,
+                    moduleNamespace,
+                    localVars,
+                    [...nestedPath, keyName]
+                );
+            }
         });
     }
 

@@ -51,4 +51,18 @@ describe('Vuex Store Analysis Edge Cases', () => {
         assert.ok(state, 'Should parse module state');
         assert.deepStrictEqual(state?.modulePath, ['publicModule'], 'State path should keep structural module path');
     });
+
+    it('should index nested state paths for deep property lookup', async () => {
+        const indexer = new StoreIndexer(fixtureRoot);
+        await indexer.index();
+
+        const nestedStates = indexer
+            .getStoreMap()
+            ?.state.filter((item) =>
+                item.modulePath.length >= 2 &&
+                item.modulePath[0] === 'userModule'
+            ) || [];
+
+        assert.ok(nestedStates.length > 0, 'Should parse nested state path under userModule when nested keys exist');
+    });
 });

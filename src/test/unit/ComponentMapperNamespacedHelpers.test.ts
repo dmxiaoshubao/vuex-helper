@@ -115,6 +115,47 @@ export default {
         assert.strictEqual(mapping.count.originalName, 'count');
     });
 
+    it('should infer original state key from mapState function alias', () => {
+        const mapper = new ComponentMapper();
+        const doc = createDocument(`<script>
+import { mapState } from 'vuex'
+export default {
+  computed: {
+    ...mapState('user', {
+      profileName: state => state.profile.name
+    })
+  }
+}
+</script>`);
+
+        const mapping = mapper.getMapping(doc);
+        assert.ok(mapping.profileName, 'profileName mapping should exist');
+        assert.strictEqual(mapping.profileName.type, 'state');
+        assert.strictEqual(mapping.profileName.namespace, 'user');
+        assert.strictEqual(mapping.profileName.originalName, 'profile.name');
+    });
+
+    it('should infer original state key from namespaced helper function alias', () => {
+        const mapper = new ComponentMapper();
+        const doc = createDocument(`<script>
+import { createNamespacedHelpers } from 'vuex'
+const { mapState: mapUserState } = createNamespacedHelpers('user')
+export default {
+  computed: {
+    ...mapUserState({
+      profileName: state => state.profile.name
+    })
+  }
+}
+</script>`);
+
+        const mapping = mapper.getMapping(doc);
+        assert.ok(mapping.profileName, 'profileName mapping should exist');
+        assert.strictEqual(mapping.profileName.type, 'state');
+        assert.strictEqual(mapping.profileName.namespace, 'user');
+        assert.strictEqual(mapping.profileName.originalName, 'profile.name');
+    });
+
     it('should resolve namespace constants for helper factories and map helpers', () => {
         const mapper = new ComponentMapper();
         const doc = createDocument(`<script>

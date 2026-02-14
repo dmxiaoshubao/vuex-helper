@@ -1,9 +1,11 @@
-const SET_NAME = 'SET_NAME';
+const SET_NAME2 = 'SET_NAME';
 
 const userModule = {
   namespaced: true,
   state: {
     profile: {
+    },
+    profile2: {
       name: 'guest',
     },
   },
@@ -11,7 +13,7 @@ const userModule = {
     'displayName': (state) => state.profile.name,
   },
   mutations: {
-    [SET_NAME](state, name) {
+    [SET_NAME2](state, name) {
       state.profile.name = name;
     },
     'RESET_PROFILE'(state) {
@@ -20,7 +22,8 @@ const userModule = {
   },
   actions: {
     ['fetchProfile']({ commit }, name) {
-      commit(SET_NAME, name);
+      commit('RESET_PROFILE')
+      commit(SET_NAME2, name);
     },
   },
 };

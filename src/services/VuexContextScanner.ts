@@ -5,10 +5,12 @@ export type VuexContextType = 'state' | 'getter' | 'mutation' | 'action' | 'unkn
 export interface VuexContext {
     type: VuexContextType;
     method: 'mapHelper' | 'dispatch' | 'commit' | 'access'; // 'access' for this.$store.state.xxx
+    calleeName?: string; // actual callee token, e.g. "commit" / "dispatch" / alias like "c"
     namespace?: string;
     argumentIndex?: number; // 0-based index of the argument we are in
     isNested?: boolean; // true if we are inside [ ] or { } within the function call
     isObject?: boolean; // true if we are inside { } (Object context)
+    isStoreMethod?: boolean; // true for this.$store.commit/dispatch style calls
 }
 
 type HelperName = 'mapState' | 'mapGetters' | 'mapMutations' | 'mapActions';
@@ -16,6 +18,8 @@ type HelperName = 'mapState' | 'mapGetters' | 'mapMutations' | 'mapActions';
 interface HelperContext {
     functionAliasMap: Record<string, { helperName: HelperName; namespace?: string }>;
     objectNamespaceMap: Record<string, string>;
+    callAliasMap: Record<string, 'commit' | 'dispatch'>;
+    thisAliases: Set<string>;
 }
 
 export class VuexContextScanner {
@@ -104,13 +108,16 @@ export class VuexContextScanner {
             index: number,
             precedingWord: string,
             precedingObject: string,
+            precedingParentObject: string,
             extractedArgs: string[],
             argIndex: number // Track current argument index (comma count)
         }[] = [];
 
         let prevWord = '';
         let prevObject = '';
+        let prevParentObject = '';
         let pendingMemberObject = '';
+        let pendingMemberParentObject = '';
 
         for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i];
@@ -119,6 +126,7 @@ export class VuexContextScanner {
                 if (token.value === '.') {
                     if (prevWord) {
                         pendingMemberObject = prevWord;
+                        pendingMemberParentObject = prevObject;
                     }
                     prevWord = '';
                     continue;
@@ -130,12 +138,15 @@ export class VuexContextScanner {
                         index: i,
                         precedingWord: prevWord,
                         precedingObject: prevObject,
+                        precedingParentObject: prevParentObject,
                         extractedArgs: [],
                         argIndex: 0
                     });
                     prevWord = '';
                     prevObject = '';
+                    prevParentObject = '';
                     pendingMemberObject = '';
+                    pendingMemberParentObject = '';
                 } else if ([')', '}', ']'].includes(token.value)) {
                     if (outputStack.length > 0) {
                         const last = outputStack[outputStack.length - 1];
@@ -148,7 +159,9 @@ export class VuexContextScanner {
                     }
                     prevWord = '';
                     prevObject = '';
+                    prevParentObject = '';
                     pendingMemberObject = '';
+                    pendingMemberParentObject = '';
                 } else if (token.value === ',') {
                      // Comma increments argument index for the current scope
                      if (outputStack.length > 0) {
@@ -156,7 +169,9 @@ export class VuexContextScanner {
                      }
                      prevWord = '';
                      prevObject = '';
+                     prevParentObject = '';
                      pendingMemberObject = '';
+                     pendingMemberParentObject = '';
                 }
             } else if (token.type === 'string') {
                 // If we are directly inside a function call '(', this string is an argument
@@ -168,15 +183,20 @@ export class VuexContextScanner {
                  }
                  prevWord = '';
                  prevObject = '';
+                 prevParentObject = '';
                  pendingMemberObject = '';
+                 pendingMemberParentObject = '';
             } else {
                 // word
                 prevWord = token.value;
                 if (pendingMemberObject) {
+                    prevParentObject = pendingMemberParentObject;
                     prevObject = pendingMemberObject;
                     pendingMemberObject = '';
+                    pendingMemberParentObject = '';
                 } else {
                     prevObject = '';
+                    prevParentObject = '';
                 }
             }
         }
@@ -224,6 +244,7 @@ export class VuexContextScanner {
                     return {
                         type,
                         method: 'mapHelper',
+                        calleeName: func,
                         namespace,
                         argumentIndex: frame.argIndex,
                         isNested: nestingLevel > 0,
@@ -231,17 +252,25 @@ export class VuexContextScanner {
                     };
                 }
 
-                if (['commit', 'dispatch'].includes(func)) {
+                const callAliasMethod = helperContext.callAliasMap[func];
+                const effectiveMethod = (callAliasMethod || func) as 'commit' | 'dispatch' | string;
+                if (['commit', 'dispatch'].includes(effectiveMethod)) {
                     let type: VuexContextType = 'unknown';
-                     if (func === 'commit') type = 'mutation';
-                     if (func === 'dispatch') type = 'action';
-                     return {
+                     if (effectiveMethod === 'commit') type = 'mutation';
+                     if (effectiveMethod === 'dispatch') type = 'action';
+                    const parentObject = frame.precedingParentObject;
+                    const isStoreMethod =
+                        frame.precedingObject === '$store' &&
+                        (parentObject === 'this' || helperContext.thisAliases.has(parentObject));
+                    return {
                          type,
-                         method: func as any,
+                         method: effectiveMethod as any,
+                         calleeName: func,
                          namespace, // Usually commit('ns/module')
                          argumentIndex: frame.argIndex,
                          isNested: nestingLevel > 0,
-                         isObject: false // commit/dispatch don't usually use object context like mapHelpers
+                         isObject: false, // commit/dispatch don't usually use object context like mapHelpers
+                         isStoreMethod
                      };
                 }
             }
@@ -262,6 +291,11 @@ export class VuexContextScanner {
             mapActions: { helperName: 'mapActions' }
         };
         const objectNamespaceMap: Record<string, string> = {};
+        const callAliasMap: Record<string, 'commit' | 'dispatch'> = {
+            commit: 'commit',
+            dispatch: 'dispatch'
+        };
+        const thisAliases = new Set<string>(['this']);
         const stringConstants: Record<string, string> = {};
         const namespacedFactoryNames = new Set<string>(['createNamespacedHelpers']);
 
@@ -355,6 +389,51 @@ export class VuexContextScanner {
             }
         });
 
-        return { functionAliasMap, objectNamespaceMap };
+        const aliasAssignRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(commit|dispatch)\b/g;
+        for (const match of snippet.matchAll(aliasAssignRegex)) {
+            const localName = match[1];
+            const sourceName = match[2] as 'commit' | 'dispatch';
+            if (localName && sourceName) {
+                callAliasMap[localName] = sourceName;
+            }
+        }
+
+        const memberAliasAssignRegex =
+            /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:this(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*|[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)\s*\??\.\s*(commit|dispatch)\b/g;
+        for (const match of snippet.matchAll(memberAliasAssignRegex)) {
+            const localName = match[1];
+            const sourceName = match[2] as 'commit' | 'dispatch';
+            if (localName && sourceName) {
+                callAliasMap[localName] = sourceName;
+            }
+        }
+
+        const thisAliasRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
+        for (const match of snippet.matchAll(thisAliasRegex)) {
+            const aliasName = match[1];
+            if (aliasName) {
+                thisAliases.add(aliasName);
+            }
+        }
+
+        const destructureRegex = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
+        for (const match of snippet.matchAll(destructureRegex)) {
+            const specList = match[1];
+            if (!specList) continue;
+            const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
+            specs.forEach((spec) => {
+                const noDefault = spec.split('=')[0].trim();
+                const aliasMatch = noDefault.match(/^(commit|dispatch)\s*:\s*([A-Za-z_$][\w$]*)$/);
+                if (aliasMatch) {
+                    callAliasMap[aliasMatch[2]] = aliasMatch[1] as 'commit' | 'dispatch';
+                    return;
+                }
+                if (noDefault === 'commit' || noDefault === 'dispatch') {
+                    callAliasMap[noDefault] = noDefault as 'commit' | 'dispatch';
+                }
+            });
+        }
+
+        return { functionAliasMap, objectNamespaceMap, callAliasMap, thisAliases };
     }
 }
