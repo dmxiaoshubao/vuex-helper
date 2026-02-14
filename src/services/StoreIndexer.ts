@@ -12,6 +12,7 @@ export class StoreIndexer {
     private entryAnalyzer: EntryAnalyzer;
     private storeParser: StoreParser;
     private storeMap: VuexStoreMap | null = null;
+    private lastStoreEntryPath: string | null = null;
     private indexingPromise: Promise<void> | null = null;
     private rerunRequested = false;
     private rerunInteractive = false;
@@ -50,6 +51,7 @@ export class StoreIndexer {
         console.log('Starting Vuex Store Indexing...');
         const storePath = await this.entryAnalyzer.analyze({ interactive });
         if (storePath) {
+            this.lastStoreEntryPath = storePath;
             this.storeMap = await this.storeParser.parse(storePath);
             console.log('Store indexing completed.', 
                 `State: ${this.storeMap.state.length}, `,
@@ -59,9 +61,30 @@ export class StoreIndexer {
             );
         } else {
             // Avoid stale completion/definition results after store deletion/misconfiguration.
+            this.lastStoreEntryPath = null;
             this.storeMap = null;
             console.log('No store injection found.');
         }
+    }
+
+    public shouldReindexForFile(filePath: string): boolean {
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        const lowerPath = normalizedPath.toLowerCase();
+
+        // During cold start we have no graph yet; allow discovery.
+        if (!this.storeMap) return true;
+
+        if (this.storeParser.hasIndexedFile(normalizedPath)) return true;
+        if (/(^|[\\/])(tsconfig|jsconfig)\.json$/.test(lowerPath)) return true;
+        if (/(^|[\\/])src[\\/](main|index)\.(js|ts)$/.test(lowerPath)) return true;
+        if (/[\\/]store[\\/]/.test(lowerPath)) return true;
+
+        if (this.lastStoreEntryPath) {
+            const normalizedEntry = vscode.Uri.file(this.lastStoreEntryPath).fsPath;
+            if (normalizedPath === normalizedEntry) return true;
+        }
+
+        return false;
     }
 
     public getStoreMap(): VuexStoreMap | null {

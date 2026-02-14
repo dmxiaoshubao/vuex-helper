@@ -751,4 +751,9 @@ export class StoreParser {
         const normalizedPath = vscode.Uri.file(filePath).fsPath;
         return this.fileNamespaceMap.get(normalizedPath);
     }
+
+    public hasIndexedFile(filePath: string): boolean {
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        return this.fileNamespaceMap.has(normalizedPath);
+    }
 }

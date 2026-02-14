@@ -83,4 +83,18 @@ describe('StoreIndexer Concurrency', () => {
         await indexer.index({ interactive: true });
         assert.strictEqual(interactiveCalls[0], true, 'Interactive flag should be passed through');
     });
+
+    it('should skip reindex for unrelated files after store is indexed', () => {
+        const indexer = new StoreIndexer('/tmp') as any;
+        indexer.storeMap = { state: [], getters: [], mutations: [], actions: [] };
+        indexer.lastStoreEntryPath = '/tmp/src/store/index.js';
+        indexer.storeParser = {
+            hasIndexedFile: () => false
+        };
+
+        assert.strictEqual(indexer.shouldReindexForFile('/tmp/src/components/App.vue'), false);
+        assert.strictEqual(indexer.shouldReindexForFile('/tmp/src/store/modules/user.js'), true);
+        assert.strictEqual(indexer.shouldReindexForFile('/tmp/tsconfig.json'), true);
+        assert.strictEqual(indexer.shouldReindexForFile('/tmp/src/main.js'), true);
+    });
 });

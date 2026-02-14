@@ -34,7 +34,6 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const mappedItem = mapping[word];
 
         if (mappedItem) {
-             console.log(`Found mapped item for ${word}:`, mappedItem);
              return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
 

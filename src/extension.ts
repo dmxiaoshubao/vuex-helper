@@ -28,8 +28,10 @@ export function activate(context: vscode.ExtensionContext) {
     // Re-index on file save (throttled in real app, simplified here)
     context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript' || doc.languageId === 'vue') {
-             // Avoid duplicate rebuild storms while user is saving frequently.
-             scheduler.schedule();
+             // Skip unrelated saves to avoid unnecessary full store re-parsing.
+             if (storeIndexer.shouldReindexForFile(doc.fileName)) {
+                scheduler.schedule();
+             }
         }
     }));
 
