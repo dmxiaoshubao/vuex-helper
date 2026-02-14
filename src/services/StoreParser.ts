@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import { PathResolver } from '../utils/PathResolver';
@@ -15,27 +14,32 @@ export class StoreParser {
         actions: []
     };
     private fileNamespaceMap: Map<string, string[]> = new Map();
+    private visitedModuleScope: Set<string> = new Set();
 
     constructor(workspaceRoot: string) {
         this.pathResolver = new PathResolver(workspaceRoot);
     }
 
     public async parse(storeEntryPath: string): Promise<VuexStoreMap> {
-        // Reset map
         this.storeMap = { state: [], getters: [], mutations: [], actions: [] };
         this.fileNamespaceMap.clear();
-        
+        this.visitedModuleScope.clear();
+
         await this.parseModule(storeEntryPath, []);
         return this.storeMap;
     }
 
-    private async parseModule(filePath: string, moduleNamespace: string[]) {
+    private async parseModule(filePath: string, moduleNamespace: string[]): Promise<void> {
         if (!fs.existsSync(filePath)) return;
-        
-        // Normalize path for consistent lookup
-        const normalizedPath = vscode.Uri.file(filePath).fsPath;
-        this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
 
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        const visitKey = `${normalizedPath}::${moduleNamespace.join('/')}`;
+        if (this.visitedModuleScope.has(visitKey)) {
+            return;
+        }
+        this.visitedModuleScope.add(visitKey);
+
+        this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
         console.log(`Parsing module: ${filePath}, namespace: ${moduleNamespace.join('/')}`);
 
         try {
@@ -45,343 +49,474 @@ export class StoreParser {
                 plugins: ['typescript', 'jsx']
             });
 
-            // 1. Identify valid Vuex Store or Module object
-            // It could be `export default new Vuex.Store({...})`
-            // Or `export default { state: ..., ... }` (module)
-            // Or `const store = new Vuex.Store({...}); export default store;`
+            const imports = this.collectImports(ast, filePath);
+            const localVars = this.collectLocalVars(ast);
 
-            let exportedObj: any = null;
-
-            // Simple heuristic mapping of imported names to file paths
-            const imports: Record<string, string> = {};
-
-            traverse(ast, {
-                ImportDeclaration: (path: any) => {
-                    const source = path.node.source.value;
-                    const resolved = this.pathResolver.resolve(source, filePath);
-                    if (resolved) {
-                        path.node.specifiers.forEach((s: any) => {
-                            imports[s.local.name] = resolved;
-                        });
-                    }
-                }
-            });
-
-            // Find exported object
-            // This is simplified; robust handling requires logic flow analysis
-            traverse(ast, {
-                ExportDefaultDeclaration: (path: any) => {
-                    const declaration = path.node.declaration;
-                    if (declaration.type === 'ObjectExpression') {
-                        exportedObj = declaration; // export default { state: ... }
-                    } else if (declaration.type === 'NewExpression') {
-                         // export default new Vuex.Store({...})
-                         const args = declaration.arguments;
-                         if (args.length > 0 && args[0].type === 'ObjectExpression') {
-                             exportedObj = args[0];
-                         }
-                    }
-                    // Handle Identifier export (export default store) - TODO
-                }
-            });
-            
-            // Should also look for `const store = new Vuex.Store({...})` if export default not found directly
-             if (!exportedObj) {
-                traverse(ast, {
-                    NewExpression: (path: any) => {
-                        // Check for new Vuex.Store or new Store
-                        // Very simplified check
-                         const args = path.node.arguments;
-                         if (args.length > 0 && args[0].type === 'ObjectExpression') {
-                             // Assume this is the store definition
-                             // In reality, we should check if this is assigned to 'export default' variable
-                             // For now, let's just grab the first object passed to new Store/Vuex.Store 
-                             // if it looks like a store (has state/mutations/actions)
-                             const props = args[0].properties;
-                             const hasStoreKeys = props.some((p: any) => 
-                                 p.type === 'ObjectProperty' && p.key.type === 'Identifier' && 
-                                 ['state', 'getters', 'actions', 'mutations', 'modules'].includes(p.key.name)
-                             );
-                             if (hasStoreKeys) {
-                                 exportedObj = args[0];
-                             }
-                         }
-                    }
-                });
-             }
-
-
-            // Collect top-level variable declarations for resolution
-            const localVars: Record<string, any> = {};
-            traverse(ast, {
-                VariableDeclarator: (path: any) => {
-                    if (path.node.id.type === 'Identifier') {
-                        localVars[path.node.id.name] = path.node.init;
-                    }
-                }
-            });
-
+            const exportedObj = this.findExportedStoreObject(ast, localVars);
             if (exportedObj) {
-                this.processStoreObject(exportedObj, filePath, moduleNamespace, imports, localVars);
+                await this.processStoreObject(exportedObj, filePath, moduleNamespace, imports, localVars);
             }
-
         } catch (error) {
             console.error(`Error parsing module ${filePath}:`, error);
         }
     }
 
-    private processStoreObject(objExpression: any, filePath: string, namespace: string[], imports: Record<string, string>, localVars: Record<string, any>) {
-        let isNamespaced = false;
-        
-        const properties = objExpression.properties;
-        
-        for (const prop of properties) {
-            if (prop.type === 'ObjectProperty' && prop.key.name === 'namespaced') {
-                if (prop.value.type === 'BooleanLiteral' && prop.value.value === true) {
-                    isNamespaced = true;
+    private collectImports(ast: any, filePath: string): Record<string, string> {
+        const imports: Record<string, string> = {};
+
+        traverse(ast, {
+            ImportDeclaration: (path: any) => {
+                const source = path.node.source.value;
+                const resolved = this.pathResolver.resolve(source, filePath);
+                if (!resolved) return;
+
+                path.node.specifiers.forEach((specifier: any) => {
+                    if (specifier.local && specifier.local.name) {
+                        imports[specifier.local.name] = resolved;
+                    }
+                });
+            }
+        });
+
+        return imports;
+    }
+
+    private collectLocalVars(ast: any): Record<string, any> {
+        const localVars: Record<string, any> = {};
+
+        traverse(ast, {
+            VariableDeclarator: (path: any) => {
+                if (path.node.id.type === 'Identifier') {
+                    localVars[path.node.id.name] = path.node.init;
                 }
             }
+        });
+
+        return localVars;
+    }
+
+    private findExportedStoreObject(ast: any, localVars: Record<string, any>): any | null {
+        let exportedObj: any | null = null;
+
+        traverse(ast, {
+            ExportDefaultDeclaration: (path: any) => {
+                const candidate = this.extractStoreObject(path.node.declaration, localVars);
+                if (candidate) {
+                    exportedObj = candidate;
+                    path.stop();
+                }
+            }
+        });
+
+        if (exportedObj) return exportedObj;
+
+        traverse(ast, {
+            AssignmentExpression: (path: any) => {
+                const left = path.node.left;
+                const isModuleExports =
+                    left.type === 'MemberExpression' &&
+                    left.object.type === 'Identifier' &&
+                    left.object.name === 'module' &&
+                    left.property.type === 'Identifier' &&
+                    left.property.name === 'exports';
+
+                const isExportsDefault =
+                    left.type === 'MemberExpression' &&
+                    left.object.type === 'Identifier' &&
+                    left.object.name === 'exports' &&
+                    left.property.type === 'Identifier' &&
+                    left.property.name === 'default';
+
+                if (!isModuleExports && !isExportsDefault) return;
+
+                const candidate = this.extractStoreObject(path.node.right, localVars);
+                if (candidate) {
+                    exportedObj = candidate;
+                    path.stop();
+                }
+            }
+        });
+
+        if (exportedObj) return exportedObj;
+
+        traverse(ast, {
+            NewExpression: (path: any) => {
+                const candidate = this.extractStoreObject(path.node, localVars);
+                if (candidate) {
+                    exportedObj = candidate;
+                    path.stop();
+                }
+            }
+        });
+
+        return exportedObj;
+    }
+
+    private extractStoreObject(node: any, localVars: Record<string, any>): any | null {
+        const resolvedNode = this.resolveNode(node, localVars, 0, new Set());
+        if (!resolvedNode) return null;
+
+        if (resolvedNode.type === 'ObjectExpression') {
+            return this.looksLikeStoreObject(resolvedNode) ? resolvedNode : null;
         }
-        
-        for (const prop of properties) {
-             if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
-             
-             const keyName = (prop.key as any).name;
-             let valueNode = prop.value;
 
-             // Resolve identifier if needed
-             if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-                 valueNode = localVars[valueNode.name];
-             }
+        if (resolvedNode.type === 'NewExpression') {
+            const arg0 = resolvedNode.arguments && resolvedNode.arguments.length > 0
+                ? this.resolveNode(resolvedNode.arguments[0], localVars, 0, new Set())
+                : null;
 
-             if (keyName === 'state') {
-                 this.processState(valueNode, filePath, namespace, localVars);
-             } else if (keyName === 'getters') {
-                 this.processGetters(valueNode, filePath, namespace, localVars);
-             } else if (keyName === 'mutations') {
-                 this.processMutations(valueNode, filePath, namespace, localVars);
-             } else if (keyName === 'actions') {
-                 this.processActions(valueNode, filePath, namespace, localVars);
-             } else if (keyName === 'modules') {
-                 this.processModules(valueNode, filePath, namespace, imports, localVars);
-             }
+            if (arg0 && arg0.type === 'ObjectExpression' && this.looksLikeStoreObject(arg0)) {
+                return arg0;
+            }
+        }
+
+        if (resolvedNode.type === 'CallExpression') {
+            const arg0 = resolvedNode.arguments && resolvedNode.arguments.length > 0
+                ? this.resolveNode(resolvedNode.arguments[0], localVars, 0, new Set())
+                : null;
+
+            if (arg0 && arg0.type === 'ObjectExpression' && this.looksLikeStoreObject(arg0)) {
+                return arg0;
+            }
+        }
+
+        return null;
+    }
+
+    private looksLikeStoreObject(objExpression: any): boolean {
+        const keys = new Set<string>();
+        objExpression.properties.forEach((prop: any) => {
+            const key = this.getPropertyKeyName(prop, {});
+            if (key) keys.add(key);
+        });
+
+        return ['state', 'getters', 'mutations', 'actions', 'modules', 'namespaced'].some((k) => keys.has(k));
+    }
+
+    private resolveNode(node: any, localVars: Record<string, any>, depth: number, seen: Set<string>): any {
+        if (!node || depth > 12) return node;
+
+        if (node.type === 'Identifier') {
+            const name = node.name;
+            if (seen.has(name)) return node;
+
+            const next = localVars[name];
+            if (!next) return node;
+
+            seen.add(name);
+            return this.resolveNode(next, localVars, depth + 1, seen);
+        }
+
+        if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'ParenthesizedExpression') {
+            return this.resolveNode(node.expression, localVars, depth + 1, seen);
+        }
+
+        if (node.type === 'AwaitExpression') {
+            return this.resolveNode(node.argument, localVars, depth + 1, seen);
+        }
+
+        if (node.type === 'ChainExpression') {
+            return this.resolveNode(node.expression, localVars, depth + 1, seen);
+        }
+
+        return node;
+    }
+
+    private async processStoreObject(
+        objExpression: any,
+        filePath: string,
+        moduleNamespace: string[],
+        imports: Record<string, string>,
+        localVars: Record<string, any>
+    ): Promise<void> {
+        const isNamespaced = this.readNamespacedFlag(objExpression, localVars);
+        const assetNamespace = moduleNamespace.length > 0 && isNamespaced ? moduleNamespace : [];
+
+        for (const prop of objExpression.properties) {
+            if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
+
+            const keyName = this.getPropertyKeyName(prop, localVars);
+            if (!keyName) continue;
+
+            const valueNode = this.getPropertyValueNode(prop, localVars);
+
+            if (keyName === 'state') {
+                this.processState(valueNode, filePath, moduleNamespace, localVars);
+            } else if (keyName === 'getters') {
+                this.processGetters(valueNode, filePath, assetNamespace, localVars);
+            } else if (keyName === 'mutations') {
+                this.processMutations(valueNode, filePath, assetNamespace, localVars);
+            } else if (keyName === 'actions') {
+                this.processActions(valueNode, filePath, assetNamespace, localVars);
+            } else if (keyName === 'modules') {
+                await this.processModules(valueNode, filePath, moduleNamespace, imports, localVars);
+            }
         }
     }
 
-    private processState(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>) {
+    private readNamespacedFlag(objExpression: any, localVars: Record<string, any>): boolean {
+        for (const prop of objExpression.properties) {
+            if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
+
+            const keyName = this.getPropertyKeyName(prop, localVars);
+            if (keyName !== 'namespaced') continue;
+
+            const valueNode = this.getPropertyValueNode(prop, localVars);
+            const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
+            if (resolvedValue && resolvedValue.type === 'BooleanLiteral' && resolvedValue.value === true) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private getPropertyValueNode(prop: any, localVars: Record<string, any>): any {
+        if (prop.type === 'ObjectMethod') {
+            return prop;
+        }
+
+        if (!prop.value) return prop.value;
+        return this.resolveNode(prop.value, localVars, 0, new Set());
+    }
+
+    private getPropertyKeyName(prop: any, localVars: Record<string, any>): string | null {
+        const key = prop.key;
+        if (!key) return null;
+
+        if (key.type === 'Identifier' && !prop.computed) {
+            return key.name;
+        }
+
+        if (key.type === 'StringLiteral') {
+            return key.value;
+        }
+
+        if (key.type === 'NumericLiteral') {
+            return String(key.value);
+        }
+
+        if (prop.computed) {
+            const resolvedKey = this.resolveNode(key, localVars, 0, new Set());
+            if (!resolvedKey) return null;
+
+            if (resolvedKey.type === 'StringLiteral') {
+                return resolvedKey.value;
+            }
+
+            if (resolvedKey.type === 'NumericLiteral') {
+                return String(resolvedKey.value);
+            }
+        }
+
+        return null;
+    }
+
+    private getPropertyLocation(prop: any): any {
+        if (prop.key && prop.key.loc) return prop.key.loc;
+        if (prop.loc) return prop.loc;
+        return null;
+    }
+
+    private processState(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
         if (!valueNode) return;
-        
-        // Handle Identifier resolution (double check if nested)
-        if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-            valueNode = localVars[valueNode.name];
-        }
 
-        let stateObj = valueNode;
-        if (valueNode.type === 'ArrowFunctionExpression' || valueNode.type === 'FunctionExpression') {
-             if (valueNode.body.type === 'ObjectExpression') {
-                 stateObj = valueNode.body;
-             } else if (valueNode.body.type === 'BlockStatement') {
-                 const returnStmt = valueNode.body.body.find((s: any) => s.type === 'ReturnStatement');
-                 if (returnStmt && returnStmt.argument.type === 'ObjectExpression') {
-                     stateObj = returnStmt.argument;
-                 }
-                 // Handle return state (identifier)
-                 if (returnStmt && returnStmt.argument.type === 'Identifier' && localVars[returnStmt.argument.name]) {
-                     stateObj = localVars[returnStmt.argument.name];
-                 }
-             }
-        }
+        const resolvedValueNode = this.resolveNode(valueNode, localVars, 0, new Set());
 
-        if (stateObj && stateObj.type === 'ObjectExpression') {
-            stateObj.properties.forEach((p: any) => {
-                if (p.type === 'ObjectProperty' && p.key.type === 'Identifier') {
-                    this.storeMap.state.push({
-                        name: p.key.name,
-                        defLocation: new vscode.Location(
-                            vscode.Uri.file(filePath),
-                            new vscode.Position(p.key.loc.start.line - 1, p.key.loc.start.column)
-                        ),
-                        modulePath: namespace,
-                        documentation: this.extractDocumentation(p),
-                        displayType: this.inferType(p.value)
-                    });
+        let stateObj = resolvedValueNode;
+        if (resolvedValueNode && (resolvedValueNode.type === 'ArrowFunctionExpression' || resolvedValueNode.type === 'FunctionExpression')) {
+            if (resolvedValueNode.body.type === 'ObjectExpression') {
+                stateObj = resolvedValueNode.body;
+            } else if (resolvedValueNode.body.type === 'BlockStatement') {
+                const returnStmt = resolvedValueNode.body.body.find((statement: any) => statement.type === 'ReturnStatement');
+                if (returnStmt && returnStmt.argument) {
+                    stateObj = this.resolveNode(returnStmt.argument, localVars, 0, new Set());
                 }
-            });
+            }
         }
+
+        if (!stateObj || stateObj.type !== 'ObjectExpression') return;
+
+        stateObj.properties.forEach((property: any) => {
+            if (property.type !== 'ObjectProperty') return;
+
+            const keyName = this.getPropertyKeyName(property, localVars);
+            const loc = this.getPropertyLocation(property);
+            if (!keyName || !loc) return;
+
+            this.storeMap.state.push({
+                name: keyName,
+                defLocation: new vscode.Location(
+                    vscode.Uri.file(filePath),
+                    new vscode.Position(loc.start.line - 1, loc.start.column)
+                ),
+                modulePath: namespace,
+                documentation: this.extractDocumentation(property),
+                displayType: this.inferType(property.value)
+            });
+        });
     }
 
     private inferType(node: any): string | undefined {
         if (!node) return undefined;
-        // Basic literals
+
         if (node.type === 'StringLiteral') return 'string';
         if (node.type === 'NumericLiteral') return 'number';
         if (node.type === 'BooleanLiteral') return 'boolean';
         if (node.type === 'NullLiteral') return 'null';
-        // Complex types
-        if (node.type === 'ArrayExpression') return 'Array<any>'; // Could be inferred further
+        if (node.type === 'ArrayExpression') return 'Array<any>';
         if (node.type === 'ObjectExpression') return 'Object';
         if (node.type === 'NewExpression' && node.callee.type === 'Identifier') {
-            return node.callee.name; // e.g. 'new Date()' -> 'Date'
+            return node.callee.name;
         }
-        // Functions
         if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') return 'Function';
-        
+
         return undefined;
     }
 
-    private processGetters(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>) {
-        if (!valueNode) return;
-        if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-            valueNode = localVars[valueNode.name];
-        }
-        
-        if (valueNode.type === 'ObjectExpression') {
-            valueNode.properties.forEach((p: any) => {
-                let name = '';
-                let loc = null;
-                
-                if (p.type === 'ObjectProperty' && p.key.type === 'Identifier') {
-                    name = p.key.name;
-                    loc = p.key.loc;
-                } else if (p.type === 'ObjectMethod' && p.key.type === 'Identifier') {
-                    name = p.key.name;
-                    loc = p.key.loc;
-                }
-
-                if (name && loc) {
-                    this.storeMap.getters.push({
-                        name: name,
-                        defLocation: new vscode.Location(
-                            vscode.Uri.file(filePath),
-                            new vscode.Position(loc.start.line - 1, loc.start.column)
-                        ),
-                        modulePath: namespace,
-                        documentation: this.extractDocumentation(p)
-                    });
-                }
-            });
-        }
+    private processGetters(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+        this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.getters);
     }
 
-    private processMutations(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>) {
-        if (!valueNode) return;
-        if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-            valueNode = localVars[valueNode.name];
-        }
-
-         if (valueNode.type === 'ObjectExpression') {
-            valueNode.properties.forEach((p: any) => {
-                let name = '';
-                let loc = null;
-                
-                if ((p.type === 'ObjectProperty' || p.type === 'ObjectMethod') && p.key.type === 'Identifier') {
-                    name = p.key.name;
-                    loc = p.key.loc;
-                }
-
-                if (name && loc) {
-                    this.storeMap.mutations.push({
-                        name: name,
-                        defLocation: new vscode.Location(
-                            vscode.Uri.file(filePath),
-                            new vscode.Position(loc.start.line - 1, loc.start.column)
-                        ),
-                        modulePath: namespace,
-                        documentation: this.extractDocumentation(p)
-                    });
-                }
-            });
-        }
+    private processMutations(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+        this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.mutations);
     }
 
-    private processActions(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>) {
-        if (!valueNode) return;
-        if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-            valueNode = localVars[valueNode.name];
-        }
-
-         if (valueNode.type === 'ObjectExpression') {
-            valueNode.properties.forEach((p: any) => {
-                let name = '';
-                let loc = null;
-                
-                if ((p.type === 'ObjectProperty' || p.type === 'ObjectMethod') && p.key.type === 'Identifier') {
-                    name = p.key.name;
-                    loc = p.key.loc;
-                }
-
-                if (name && loc) {
-                    this.storeMap.actions.push({
-                        name: name,
-                        defLocation: new vscode.Location(
-                            vscode.Uri.file(filePath),
-                            new vscode.Position(loc.start.line - 1, loc.start.column)
-                        ),
-                        modulePath: namespace,
-                        documentation: this.extractDocumentation(p)
-                    });
-                }
-            });
-        }
+    private processActions(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+        this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.actions);
     }
 
-    private async processModules(valueNode: any, filePath: string, namespace: string[], imports: Record<string, string>, localVars: Record<string, any>) {
+    private processFunctionCollection(
+        valueNode: any,
+        filePath: string,
+        namespace: string[],
+        localVars: Record<string, any>,
+        output: VuexGetterInfo[] | VuexMutationInfo[] | VuexActionInfo[]
+    ): void {
         if (!valueNode) return;
-        if (valueNode.type === 'Identifier' && localVars[valueNode.name]) {
-            valueNode = localVars[valueNode.name];
-        }
 
-        if (valueNode.type !== 'ObjectExpression') return;
+        const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
+        if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
 
-        for (const prop of valueNode.properties) {
-            if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
-                const moduleName = prop.key.name;
-                const newNamespace = [...namespace, moduleName];
-                
-                if (prop.value.type === 'Identifier') {
-                    const importedPath = imports[prop.value.name];
-                    if (importedPath) {
-                        await this.parseModule(importedPath, newNamespace);
-                    } else if (localVars[prop.value.name]) {
-                        // Inline module defined as variable
-                         this.processStoreObject(localVars[prop.value.name], filePath, newNamespace, imports, localVars);
-                    }
-                } else if (prop.value.type === 'ObjectExpression') {
-                    this.processStoreObject(prop.value, filePath, newNamespace, imports, localVars);
+        resolvedValue.properties.forEach((property: any) => {
+            if (property.type !== 'ObjectProperty' && property.type !== 'ObjectMethod') return;
+
+            const keyName = this.getPropertyKeyName(property, localVars);
+            const loc = this.getPropertyLocation(property);
+            if (!keyName || !loc) return;
+
+            output.push({
+                name: keyName,
+                defLocation: new vscode.Location(
+                    vscode.Uri.file(filePath),
+                    new vscode.Position(loc.start.line - 1, loc.start.column)
+                ),
+                modulePath: namespace,
+                documentation: this.extractDocumentation(property)
+            });
+        });
+    }
+
+    private async processModules(
+        valueNode: any,
+        filePath: string,
+        namespace: string[],
+        imports: Record<string, string>,
+        localVars: Record<string, any>
+    ): Promise<void> {
+        if (!valueNode) return;
+
+        const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
+        if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
+
+        for (const property of resolvedValue.properties) {
+            if (property.type !== 'ObjectProperty') continue;
+
+            const moduleName = this.getPropertyKeyName(property, localVars);
+            if (!moduleName) continue;
+
+            const newNamespace = [...namespace, moduleName];
+            const moduleValue = this.resolveNode(property.value, localVars, 0, new Set());
+
+            if (!moduleValue) continue;
+
+            if (moduleValue.type === 'ObjectExpression') {
+                await this.processStoreObject(moduleValue, filePath, newNamespace, imports, localVars);
+                continue;
+            }
+
+            if (moduleValue.type === 'Identifier') {
+                const importedPath = this.resolveImportedModulePath(moduleValue.name, imports, localVars, filePath);
+                if (importedPath) {
+                    await this.parseModule(importedPath, newNamespace);
+                    continue;
+                }
+
+                const resolvedLocalValue = this.resolveNode(localVars[moduleValue.name], localVars, 0, new Set());
+                if (resolvedLocalValue && resolvedLocalValue.type === 'ObjectExpression') {
+                    await this.processStoreObject(resolvedLocalValue, filePath, newNamespace, imports, localVars);
                 }
             }
         }
     }
-    private extractDocumentation(node: any): string | undefined {
-        if (node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0) {
-            // Filter for JSDoc comments only: must be Block Comment starting with * (which implies /** in source)
-            const jsDocComments = node.leadingComments.filter((comment: any) => 
-                comment.type === 'CommentBlock' && comment.value.startsWith('*')
-            );
 
-            if (jsDocComments.length === 0) return undefined;
-
-            return jsDocComments.map((comment: any) => {
-                let value = comment.value;
-                // Remove the initial * from /**
-                // value is string content, excluding /* and */. 
-                // For /** docs */, value is "* docs "
-                
-                // Remove leading *
-                value = value.substring(1).trim(); 
-
-                // Handle multiline formatting: strip leading * from each line
-                // Example:
-                // * First line
-                // * Second line
-                return value.split('\n').map((line: string) => {
-                    const trimmed = line.trim();
-                    // Remove leading * and optional space
-                    return trimmed.replace(/^\*\s?/, '');
-                }).join('  \n').trim(); // Use double space + newline for Markdown hard break
-            }).join('\n\n');
+    private resolveImportedModulePath(
+        identifier: string,
+        imports: Record<string, string>,
+        localVars: Record<string, any>,
+        filePath: string
+    ): string | null {
+        if (imports[identifier]) {
+            return imports[identifier];
         }
-        return undefined;
+
+        const localValue = this.resolveNode(localVars[identifier], localVars, 0, new Set());
+        if (!localValue) return null;
+
+        if (localValue.type === 'CallExpression' && localValue.callee.type === 'Identifier' && localValue.callee.name === 'require') {
+            const arg0 = localValue.arguments && localValue.arguments[0];
+            if (arg0 && arg0.type === 'StringLiteral') {
+                return this.pathResolver.resolve(arg0.value, filePath);
+            }
+        }
+
+        if (localValue.type === 'MemberExpression' && localValue.object) {
+            const objectNode = localValue.object;
+            if (
+                objectNode.type === 'CallExpression' &&
+                objectNode.callee.type === 'Identifier' &&
+                objectNode.callee.name === 'require'
+            ) {
+                const arg0 = objectNode.arguments && objectNode.arguments[0];
+                if (arg0 && arg0.type === 'StringLiteral') {
+                    return this.pathResolver.resolve(arg0.value, filePath);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private extractDocumentation(node: any): string | undefined {
+        if (!(node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0)) {
+            return undefined;
+        }
+
+        const jsDocComments = node.leadingComments.filter((comment: any) =>
+            comment.type === 'CommentBlock' && comment.value.startsWith('*')
+        );
+
+        if (jsDocComments.length === 0) return undefined;
+
+        return jsDocComments.map((comment: any) => {
+            let value = comment.value;
+            value = value.substring(1).trim();
+
+            return value
+                .split('\n')
+                .map((line: string) => line.trim().replace(/^\*\s?/, ''))
+                .join('  \n')
+                .trim();
+        }).join('\n\n');
     }
 
     public getNamespace(filePath: string): string[] | undefined {

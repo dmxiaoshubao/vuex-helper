@@ -116,6 +116,62 @@ describe('VuexCompletionItemProvider', () => {
         assert.strictEqual(hasRoleItem.insertText, "'others/hasRole'");
     });
 
+    it('should provide completion for aliased map helper calls', async () => {
+        const text = `import { mapState as ms } from 'vuex'; const c = { computed: { ...ms([ ]) } }`;
+        const cursor = text.indexOf('[ ]') + 2;
+        const document = {
+            fileName: 'test.vue',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const countItem = items.find((i: any) => i.label === 'count');
+        assert.ok(countItem, 'Aliased mapState should provide root state completion');
+    });
+
+    it('should scope completion for namespaced helper object member calls', async () => {
+        const text = `import { createNamespacedHelpers } from 'vuex'; const h = createNamespacedHelpers('user'); const c = { methods: { ...h.mapActions([ ]) } }`;
+        const cursor = text.indexOf('[ ]') + 2;
+        const document = {
+            fileName: 'test.vue',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const fetchItem = items.find((i: any) => i.label === 'fetchProfile');
+        assert.ok(fetchItem, 'Namespaced helper object should provide namespaced action');
+        const rootItem = items.find((i: any) => i.label === 'incrementAsync');
+        assert.ok(!rootItem, 'Namespaced helper object should filter out root actions');
+    });
+
+    it('should provide completion for require-style helper aliases', async () => {
+        const text = `const { mapState: ms } = require('vuex'); const c = { computed: { ...ms([ ]) } }`;
+        const cursor = text.indexOf('[ ]') + 2;
+        const document = {
+            fileName: 'test.vue',
+            getText: () => text,
+            offsetAt: () => cursor,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: cursor } as any;
+
+        const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const countItem = items.find((i: any) => i.label === 'count');
+        assert.ok(countItem, 'Require alias mapState should provide root state completion');
+    });
+
     it('should provide key-value completion for object syntax', async () => {
         const document = {
             fileName: 'test.vue',

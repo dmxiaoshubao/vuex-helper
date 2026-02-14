@@ -71,15 +71,133 @@ export class ComponentMapper {
             });
 
             const mapping: ComponentMapInfo = {};
-            const validHelpers = ['mapState', 'mapGetters', 'mapMutations', 'mapActions'];
+            const validHelpers = ['mapState', 'mapGetters', 'mapMutations', 'mapActions'] as const;
+            type HelperName = typeof validHelpers[number];
+            const helperFunctionInfo: Record<string, { namespace?: string; helperName: HelperName }> = {};
+            const helperObjectNamespace: Record<string, string> = {};
+            const namespacedFactoryNames = new Set<string>(['createNamespacedHelpers']);
+            const localStringConstants: Record<string, string> = {};
+
+            traverse(ast, {
+                ImportDeclaration: (path: any) => {
+                    const declaration = path.node;
+                    if (!declaration.source || declaration.source.value !== 'vuex') return;
+
+                    declaration.specifiers.forEach((specifier: any) => {
+                        if (!specifier.local || !specifier.local.name) return;
+
+                        if (specifier.type === 'ImportSpecifier' && specifier.imported?.name) {
+                            const importedName = specifier.imported.name;
+                            const localName = specifier.local.name;
+                            if (importedName === 'createNamespacedHelpers') {
+                                namespacedFactoryNames.add(localName);
+                                return;
+                            }
+                            if (validHelpers.includes(importedName as HelperName)) {
+                                helperFunctionInfo[localName] = {
+                                    helperName: importedName as HelperName
+                                };
+                            }
+                        }
+                    });
+                }
+            });
+
+            traverse(ast, {
+                VariableDeclarator: (path: any) => {
+                    const declarator = path.node;
+
+                    if (
+                        declarator.id?.type === 'Identifier' &&
+                        declarator.init?.type === 'StringLiteral'
+                    ) {
+                        localStringConstants[declarator.id.name] = declarator.init.value;
+                    }
+
+                    if (
+                        declarator.id?.type === 'ObjectPattern' &&
+                        declarator.init?.type === 'CallExpression' &&
+                        declarator.init.callee?.type === 'Identifier' &&
+                        declarator.init.callee.name === 'require' &&
+                        declarator.init.arguments?.[0]?.type === 'StringLiteral' &&
+                        declarator.init.arguments[0].value === 'vuex'
+                    ) {
+                        declarator.id.properties.forEach((prop: any) => {
+                            if (prop.type !== 'ObjectProperty') return;
+
+                            const importedName = prop.key?.name || prop.key?.value;
+                            const localName = prop.value?.name || importedName;
+                            if (!importedName || !localName) return;
+
+                            if (importedName === 'createNamespacedHelpers') {
+                                namespacedFactoryNames.add(localName);
+                                return;
+                            }
+
+                            if (validHelpers.includes(importedName as HelperName)) {
+                                helperFunctionInfo[localName] = { helperName: importedName as HelperName };
+                            }
+                        });
+                    }
+
+                    if (!declarator.init || declarator.init.type !== 'CallExpression') return;
+                    const init = declarator.init;
+
+                    if (init.callee.type !== 'Identifier' || !namespacedFactoryNames.has(init.callee.name)) return;
+                    if (!init.arguments || init.arguments.length === 0) return;
+
+                    let namespace: string | undefined;
+                    const namespaceArg = init.arguments[0];
+                    if (namespaceArg.type === 'StringLiteral') {
+                        namespace = namespaceArg.value;
+                    } else if (namespaceArg.type === 'Identifier') {
+                        namespace = localStringConstants[namespaceArg.name];
+                    }
+                    if (!namespace) return;
+
+                    if (declarator.id.type === 'Identifier') {
+                        helperObjectNamespace[declarator.id.name] = namespace;
+                        return;
+                    }
+
+                    if (declarator.id.type === 'ObjectPattern') {
+                        declarator.id.properties.forEach((prop: any) => {
+                            if (prop.type !== 'ObjectProperty') return;
+
+                            const importedName = prop.key?.name || prop.key?.value;
+                            if (!importedName || !validHelpers.includes(importedName)) return;
+
+                            const localName = prop.value?.name || importedName;
+                            helperFunctionInfo[localName] = { namespace, helperName: importedName as HelperName };
+                        });
+                    }
+                }
+            });
 
             traverse(ast, {
                 CallExpression(path: any) {
                     const callee = path.node.callee;
-                    const calleeName = callee.name || (callee.property && callee.property.name);
+                    let calleeName: string | undefined;
+                    let inferredNamespace: string | undefined;
+                    let inferredHelperName: HelperName | undefined;
 
-                    if (typeof calleeName === 'string' && validHelpers.includes(calleeName)) {
-                        const helperName = calleeName;
+                    if (callee.type === 'Identifier') {
+                        calleeName = callee.name;
+                        const helperInfo = helperFunctionInfo[callee.name];
+                        inferredNamespace = helperInfo?.namespace;
+                        inferredHelperName = helperInfo?.helperName;
+                    } else if (callee.type === 'MemberExpression' && callee.property) {
+                        calleeName = callee.property.name;
+                        if (callee.object && callee.object.type === 'Identifier') {
+                            inferredNamespace = helperObjectNamespace[callee.object.name];
+                        }
+                    }
+
+                    if (typeof calleeName === 'string') {
+                        const helperName = (inferredHelperName || calleeName) as string;
+                        if (!validHelpers.includes(helperName as HelperName)) {
+                            return;
+                        }
 
                         let type: 'state' | 'getter' | 'mutation' | 'action' | undefined;
 
@@ -93,7 +211,7 @@ export class ComponentMapper {
                         const args = path.node.arguments;
                         if (args.length === 0) return;
 
-                        let namespace: string | undefined;
+                        let namespace: string | undefined = inferredNamespace;
                         let mapObj: any;
 
                         // Check for namespace: mapState('ns', [...])
@@ -102,6 +220,13 @@ export class ComponentMapper {
                             if (args.length > 1) {
                                 mapObj = args[1];
                             }
+                        } else if (
+                            args[0].type === 'Identifier' &&
+                            !!localStringConstants[args[0].name] &&
+                            args.length > 1
+                        ) {
+                            namespace = localStringConstants[args[0].name];
+                            mapObj = args[1];
                         } else {
                             mapObj = args[0];
                         }
@@ -125,7 +250,16 @@ export class ComponentMapper {
 
                                     if (prop.value.type === 'StringLiteral') {
                                         mapping[localName] = { type: type!, originalName: prop.value.value, namespace };
+                                    } else if (
+                                        prop.value.type === 'ArrowFunctionExpression' ||
+                                        prop.value.type === 'FunctionExpression'
+                                    ) {
+                                        // mapState({ local: state => state.xxx }) / method wrapper variants
+                                        mapping[localName] = { type: type!, originalName: localName, namespace };
                                     }
+                                } else if (prop.type === 'ObjectMethod') {
+                                    const localName = prop.key.name || prop.key.value;
+                                    mapping[localName] = { type: type!, originalName: localName, namespace };
                                 }
                             });
                         }

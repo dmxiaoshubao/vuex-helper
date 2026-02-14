@@ -11,6 +11,13 @@ export interface VuexContext {
     isObject?: boolean; // true if we are inside { } (Object context)
 }
 
+type HelperName = 'mapState' | 'mapGetters' | 'mapMutations' | 'mapActions';
+
+interface HelperContext {
+    functionAliasMap: Record<string, { helperName: HelperName; namespace?: string }>;
+    objectNamespaceMap: Record<string, string>;
+}
+
 export class VuexContextScanner {
 
     /**
@@ -46,12 +53,13 @@ export class VuexContextScanner {
         const windowStart = searchLimit;
         const windowEnd = offset;
         const snippet = text.substring(windowStart, windowEnd);
+        const helperContext = this.collectHelperContext(snippet);
 
         // Tokenize properly retaining string values to extract arguments
         const tokens = this.tokenize(snippet);
 
         // Parse stack to find enclosing function call and extracted args
-        const result = this.analyzeTokens(tokens);
+        const result = this.analyzeTokens(tokens, helperContext);
 
         return result;
     }
@@ -65,7 +73,7 @@ export class VuexContextScanner {
         // 3. Words: identifiers
 
         // 字符串匹配不跨行，避免 snippet 截断导致未闭合引号与后续引号错误配对
-        const tokenRegex = /("[^\n]*?"|'[^\n]*?'|`[^`]*?`)|([(){},\[\]])|([a-zA-Z0-9_$]+)/g;
+        const tokenRegex = /("[^\n]*?"|'[^\n]*?'|`[^`]*?`)|([(){},\[\]\.])|([a-zA-Z0-9_$]+)/g;
 
         // Pre-process: replace comments with spaces to avoid matching inside comments
         // Block comments: /\*[\s\S]*?\*/
@@ -88,32 +96,46 @@ export class VuexContextScanner {
         return tokens;
     }
 
-    private analyzeTokens(tokens: { type: string, value: string }[]): VuexContext | undefined {
+    private analyzeTokens(tokens: { type: string, value: string }[], helperContext: HelperContext): VuexContext | undefined {
         // Stack to track brackets/parentheses and what precedes them
         // We also want to track arguments 'accumulated' inside the current parentheses scope
         const outputStack: {
             token: string,
             index: number,
             precedingWord: string,
+            precedingObject: string,
             extractedArgs: string[],
             argIndex: number // Track current argument index (comma count)
         }[] = [];
 
         let prevWord = '';
+        let prevObject = '';
+        let pendingMemberObject = '';
 
         for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i];
 
             if (token.type === 'symbol') {
+                if (token.value === '.') {
+                    if (prevWord) {
+                        pendingMemberObject = prevWord;
+                    }
+                    prevWord = '';
+                    continue;
+                }
+
                 if (['(', '{', '['].includes(token.value)) {
                     outputStack.push({
                         token: token.value,
                         index: i,
                         precedingWord: prevWord,
+                        precedingObject: prevObject,
                         extractedArgs: [],
                         argIndex: 0
                     });
                     prevWord = '';
+                    prevObject = '';
+                    pendingMemberObject = '';
                 } else if ([')', '}', ']'].includes(token.value)) {
                     if (outputStack.length > 0) {
                         const last = outputStack[outputStack.length - 1];
@@ -125,12 +147,16 @@ export class VuexContextScanner {
                         }
                     }
                     prevWord = '';
+                    prevObject = '';
+                    pendingMemberObject = '';
                 } else if (token.value === ',') {
                      // Comma increments argument index for the current scope
                      if (outputStack.length > 0) {
                          outputStack[outputStack.length - 1].argIndex++;
                      }
                      prevWord = '';
+                     prevObject = '';
+                     pendingMemberObject = '';
                 }
             } else if (token.type === 'string') {
                 // If we are directly inside a function call '(', this string is an argument
@@ -141,9 +167,17 @@ export class VuexContextScanner {
                      }
                  }
                  prevWord = '';
+                 prevObject = '';
+                 pendingMemberObject = '';
             } else {
                 // word
                 prevWord = token.value;
+                if (pendingMemberObject) {
+                    prevObject = pendingMemberObject;
+                    pendingMemberObject = '';
+                } else {
+                    prevObject = '';
+                }
             }
         }
 
@@ -157,29 +191,35 @@ export class VuexContextScanner {
 
             if (frame.token === '(') {
                 const func = frame.precedingWord;
-                let namespace: string | undefined = undefined;
+                const helperInfo = helperContext.functionAliasMap[func];
+                const canonicalFunc = helperInfo?.helperName || func;
+                let namespace: string | undefined = helperInfo?.namespace;
+                if (!namespace && frame.precedingObject) {
+                    namespace = helperContext.objectNamespaceMap[frame.precedingObject];
+                }
+                let namespaceFromArguments: string | undefined = undefined;
 
                 // Identify namespace if present (if we are at argIndex >= 1)
                 if (frame.extractedArgs.length > 0) {
                     const firstArg = frame.extractedArgs[0];
                     // Strip quotes
                     if (firstArg.length >= 2) {
-                         namespace = firstArg.slice(1, -1);
+                         namespaceFromArguments = firstArg.slice(1, -1);
                     }
                 }
 
                 // If we are in the first argument (argIndex 0), namespace is not yet established from arguments
                 // (unless we are editing it right now, which is handled by provider logic using direct string match)
-                if (frame.argIndex === 0) {
-                    namespace = undefined;
+                if (frame.argIndex > 0 && namespaceFromArguments) {
+                    namespace = namespaceFromArguments;
                 }
 
-                if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(func)) {
+                if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(canonicalFunc)) {
                     let type: VuexContextType = 'unknown';
-                    if (func === 'mapState') type = 'state';
-                    if (func === 'mapGetters') type = 'getter';
-                    if (func === 'mapMutations') type = 'mutation';
-                    if (func === 'mapActions') type = 'action';
+                    if (canonicalFunc === 'mapState') type = 'state';
+                    if (canonicalFunc === 'mapGetters') type = 'getter';
+                    if (canonicalFunc === 'mapMutations') type = 'mutation';
+                    if (canonicalFunc === 'mapActions') type = 'action';
 
                     return {
                         type,
@@ -212,5 +252,109 @@ export class VuexContextScanner {
         }
 
         return undefined;
+    }
+
+    private collectHelperContext(snippet: string): HelperContext {
+        const functionAliasMap: Record<string, { helperName: HelperName; namespace?: string }> = {
+            mapState: { helperName: 'mapState' },
+            mapGetters: { helperName: 'mapGetters' },
+            mapMutations: { helperName: 'mapMutations' },
+            mapActions: { helperName: 'mapActions' }
+        };
+        const objectNamespaceMap: Record<string, string> = {};
+        const stringConstants: Record<string, string> = {};
+        const namespacedFactoryNames = new Set<string>(['createNamespacedHelpers']);
+
+        const parseNamespaceArg = (raw: string): string | undefined => {
+            const trimmed = raw.trim();
+            const quoted = trimmed.match(/^['"]([^'"]+)['"]$/);
+            if (quoted) return quoted[1];
+            return stringConstants[trimmed];
+        };
+
+        const constantRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"][^'"]+['"])/g;
+        for (const match of snippet.matchAll(constantRegex)) {
+            const varName = match[1];
+            const literal = match[2];
+            const valueMatch = literal.match(/^['"]([^'"]+)['"]$/);
+            if (varName && valueMatch) {
+                stringConstants[varName] = valueMatch[1];
+            }
+        }
+
+        const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]vuex['"]/g;
+        for (const match of snippet.matchAll(importRegex)) {
+            const specList = match[1];
+            if (!specList) continue;
+            const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
+            specs.forEach((spec) => {
+                const aliasMatch = spec.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+                const importedName = aliasMatch ? aliasMatch[1] : spec;
+                const localName = aliasMatch ? aliasMatch[2] : spec;
+                if (importedName === 'createNamespacedHelpers') {
+                    namespacedFactoryNames.add(localName);
+                    return;
+                }
+                if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(importedName)) {
+                    functionAliasMap[localName] = { helperName: importedName as HelperName };
+                }
+            });
+        }
+
+        const requireRegex = /\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['"]vuex['"]\s*\)/g;
+        for (const match of snippet.matchAll(requireRegex)) {
+            const specList = match[1];
+            if (!specList) continue;
+            const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
+            specs.forEach((spec) => {
+                const aliasMatch = spec.match(/^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)$/);
+                const importedName = aliasMatch ? aliasMatch[1] : spec;
+                const localName = aliasMatch ? aliasMatch[2] : spec;
+                if (importedName === 'createNamespacedHelpers') {
+                    namespacedFactoryNames.add(localName);
+                    return;
+                }
+                if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(importedName)) {
+                    functionAliasMap[localName] = { helperName: importedName as HelperName };
+                }
+            });
+        }
+
+        namespacedFactoryNames.forEach((factoryName) => {
+            const escapedFactory = factoryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const objectFactoryRegex = new RegExp(
+                `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${escapedFactory}\\(\\s*([^\\)]+)\\s*\\)`,
+                'g'
+            );
+            for (const match of snippet.matchAll(objectFactoryRegex)) {
+                const localName = match[1];
+                const namespace = parseNamespaceArg(match[2] || '');
+                if (localName && namespace) {
+                    objectNamespaceMap[localName] = namespace;
+                }
+            }
+
+            const destructureFactoryRegex = new RegExp(
+                `\\b(?:const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*${escapedFactory}\\(\\s*([^\\)]+)\\s*\\)`,
+                'g'
+            );
+            for (const match of snippet.matchAll(destructureFactoryRegex)) {
+                const specList = match[1];
+                const namespace = parseNamespaceArg(match[2] || '');
+                if (!specList || !namespace) continue;
+
+                const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
+                specs.forEach((spec) => {
+                    const aliasMatch = spec.match(/^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)$/);
+                    const helperName = aliasMatch ? aliasMatch[1] : spec;
+                    const localName = aliasMatch ? aliasMatch[2] : spec;
+                    if (['mapState', 'mapGetters', 'mapMutations', 'mapActions'].includes(helperName)) {
+                        functionAliasMap[localName] = { helperName: helperName as HelperName, namespace };
+                    }
+                });
+            }
+        });
+
+        return { functionAliasMap, objectNamespaceMap };
     }
 }
