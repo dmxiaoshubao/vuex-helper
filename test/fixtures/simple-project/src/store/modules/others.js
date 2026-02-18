@@ -95,6 +95,7 @@ const actions = {
     // 模拟异步操作
     await new Promise((resolve) => setTimeout(resolve, 100));
     commit("SET_THEME", theme);
+    commit('others/SET_PRODUCT_NAME', null, { root: true })
   },
   /**
    * 更新语言设置

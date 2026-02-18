@@ -90,12 +90,35 @@ export function hasRootTrueOption(
     method: 'commit' | 'dispatch',
     calleeName?: string,
 ): boolean {
-    const source = document.getText();
+    const MAX_SCAN_WINDOW = 5000;
     const offset = document.offsetAt(position);
+    const hasRangeApi =
+        typeof (document as any).positionAt === 'function' &&
+        typeof (document as any).lineCount === 'number';
+
+    let source: string;
+    let localOffset: number;
+    if (hasRangeApi) {
+        const startOffset = Math.max(0, offset - MAX_SCAN_WINDOW);
+        const lastLine = document.lineAt(document.lineCount - 1);
+        const documentEndOffset = document.offsetAt(new vscode.Position(document.lineCount - 1, lastLine.text.length));
+        const endOffset = Math.min(documentEndOffset, offset + MAX_SCAN_WINDOW);
+        source = document.getText(
+            new vscode.Range(
+                document.positionAt(startOffset),
+                document.positionAt(endOffset),
+            ),
+        );
+        localOffset = offset - startOffset;
+    } else {
+        // Unit-test fallback where mock TextDocument may only implement getText()/offsetAt.
+        source = document.getText();
+        localOffset = offset;
+    }
     const callName = (calleeName || method).trim();
 
     // 精确提取光标所在的那个 commit/dispatch 调用体
-    const callBody = extractCurrentCallBody(source, offset, callName);
+    const callBody = extractCurrentCallBody(source, localOffset, callName);
     if (!callBody) return false;
 
     // 1. 直接在调用体内检测 { root: true }
@@ -111,9 +134,9 @@ export function hasRootTrueOption(
 
     const id = thirdArgMatch[1];
     const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const windowStart = Math.max(0, offset - 2000);
-    const windowEnd = Math.min(source.length, offset + 2000);
-    const windowText = source.substring(windowStart, windowEnd);
+    const localWindowStart = Math.max(0, localOffset - 2000);
+    const localWindowEnd = Math.min(source.length, localOffset + 2000);
+    const windowText = source.substring(localWindowStart, localWindowEnd);
 
     // 变量声明: const opts = { root: true }
     const declPattern = new RegExp(

@@ -26,6 +26,7 @@ export class VuexCompletionItemProvider
     token: vscode.CancellationToken,
     context: vscode.CompletionContext,
   ): Promise<vscode.CompletionItem[] | vscode.CompletionList | undefined> {
+    if (token.isCancellationRequested) return undefined;
     const storeMap = this.storeIndexer.getStoreMap();
     if (!storeMap) {
       return undefined;
@@ -37,6 +38,7 @@ export class VuexCompletionItemProvider
     const vuexContext = this.contextScanner.getContext(document, position);
 
     if (vuexContext && vuexContext.type !== "unknown") {
+      if (token.isCancellationRequested) return undefined;
       const contextLineText = document.lineAt(position.line).text;
       const contextPrefix = contextLineText.substring(0, position.character);
       const callName =
@@ -63,6 +65,7 @@ export class VuexCompletionItemProvider
         modulePath: string[];
       }[] = [];
       let kind = vscode.CompletionItemKind.Property;
+      const itemType = this.toItemType(vuexContext.type);
 
       // Special Case: mapHelper arg 0 -> Show Modules
       if (
@@ -70,29 +73,7 @@ export class VuexCompletionItemProvider
         vuexContext.argumentIndex === 0 &&
         !vuexContext.isNested
       ) {
-        // Collect all unique modules
-        const allModules = new Set<string>();
-        // Gather modules from all stores
-        [
-          ...storeMap.state,
-          ...storeMap.getters,
-          ...storeMap.mutations,
-          ...storeMap.actions,
-        ].forEach((item) => {
-          const path = item.modulePath.join("/");
-          if (path) allModules.add(path);
-        });
-
-        // Create Module items
-        const moduleItems: vscode.CompletionItem[] = [];
-        allModules.forEach((mod) => {
-          const item = this.createCompletionItem(
-            mod,
-            vscode.CompletionItemKind.Module,
-            "[Vuex Module]",
-          );
-          moduleItems.push(item);
-        });
+        const allModules = this.storeIndexer.getAllModuleNames();
 
         items = []; // Clear other items
         // We will use existing robust quote/range logic below to render these moduleItems
@@ -118,26 +99,27 @@ export class VuexCompletionItemProvider
         kind = vscode.CompletionItemKind.Module;
       } else {
         // Normal Logic
-        if (vuexContext.type === "state") {
-          items = storeMap.state;
+        if (vuexContext.type === "state" && itemType) {
+          items = this.storeIndexer.getItemsByType(itemType) as any[];
           kind = vscode.CompletionItemKind.Field;
-        } else if (vuexContext.type === "getter") {
-          items = storeMap.getters;
+        } else if (vuexContext.type === "getter" && itemType) {
+          items = this.storeIndexer.getItemsByType(itemType) as any[];
           kind = vscode.CompletionItemKind.Property;
-        } else if (vuexContext.type === "mutation") {
-          items = storeMap.mutations;
+        } else if (vuexContext.type === "mutation" && itemType) {
+          items = this.storeIndexer.getItemsByType(itemType) as any[];
           kind = vscode.CompletionItemKind.Method;
-        } else if (vuexContext.type === "action") {
-          items = storeMap.actions;
+        } else if (vuexContext.type === "action" && itemType) {
+          items = this.storeIndexer.getItemsByType(itemType) as any[];
           kind = vscode.CompletionItemKind.Function;
         }
 
         // Filtering by Namespace
-        if (vuexContext.namespace) {
+        if (vuexContext.namespace && itemType) {
           const ns = vuexContext.namespace;
-          items = items.filter((i) => i.modulePath.join("/") === ns);
+          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, ns) as any[];
         } else if (
           currentNamespace &&
+          itemType &&
           (vuexContext.type === "mutation" || vuexContext.type === "action") &&
           !vuexContext.isStoreMethod &&
           !isRootTrue &&
@@ -146,7 +128,7 @@ export class VuexCompletionItemProvider
           // If inside a module, scoped completion for commit/dispatch
           // Filter to only current module items (Strict scoping as per user request)
           const nsJoined = currentNamespace.join("/");
-          items = items.filter((i) => i.modulePath.join("/") === nsJoined);
+          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, nsJoined) as any[];
         }
       }
 
@@ -410,13 +392,21 @@ export class VuexCompletionItemProvider
 
       return new vscode.CompletionList(results, false);
     }
+    if (token.isCancellationRequested) return undefined;
 
     // 2. this.$store.state. or this.$store.getters. completion
     const lineText = document.lineAt(position.line).text;
     const prefix = lineText.substring(0, position.character);
     const normalizedPrefix = prefix.replace(/\?\./g, ".");
-    const textBeforeCursor = document
-      .getText(new vscode.Range(new vscode.Position(0, 0), position));
+    const hasPositionAt = typeof (document as any).positionAt === "function";
+    const textBeforeCursor = hasPositionAt
+      ? document.getText(
+          new vscode.Range(
+            document.positionAt(Math.max(0, document.offsetAt(position) - 4000)),
+            position,
+          ),
+        )
+      : document.getText(new vscode.Range(new vscode.Position(0, 0), position));
     const thisLikePattern = this.buildThisLikePattern(document, textBeforeCursor);
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
@@ -428,6 +418,7 @@ export class VuexCompletionItemProvider
     );
 
     if (storeBracketMatch) {
+      if (token.isCancellationRequested) return undefined;
       const propertyType = storeBracketMatch[1]; // 'state' or 'getters'
       const partialInput = storeBracketMatch[2]; // e.g., "others/hasRole " or ""
 
@@ -515,6 +506,7 @@ export class VuexCompletionItemProvider
     );
 
     if (storePropertyMatch) {
+      if (token.isCancellationRequested) return undefined;
       const propertyType = storePropertyMatch[1]; // 'state' or 'getters'
       const pathInput = storePropertyMatch[2]; // e.g., "user." or "user.na" or ""
 
@@ -632,6 +624,7 @@ export class VuexCompletionItemProvider
     );
 
     if (storeMatch) {
+      if (token.isCancellationRequested) return undefined;
       const partialInput = storeMatch[1]; // e.g., "d" or "dis" or ""
       const accessToken = this.getAccessToken(prefix, partialInput.length);
       const items: vscode.CompletionItem[] = [];
@@ -706,6 +699,7 @@ export class VuexCompletionItemProvider
     // 3a. rootState.xxx completion (从根开始的 state 访问)
     const rootStateMatch = prefix.match(/\brootState\.([a-zA-Z0-9_$\.]*)$/);
     if (rootStateMatch) {
+      if (token.isCancellationRequested) return undefined;
       const pathInput = rootStateMatch[1] || "";
       const pathParts = pathInput.split(".");
       const currentInput = pathParts[pathParts.length - 1] || "";
@@ -751,6 +745,7 @@ export class VuexCompletionItemProvider
     // 3b. rootGetters.xxx completion (点号形式，根级 getter 用点号，命名空间 getter 用方括号)
     const rootGettersDotMatch = prefix.match(/\brootGetters\.([a-zA-Z0-9_$]*)$/);
     if (rootGettersDotMatch) {
+      if (token.isCancellationRequested) return undefined;
       const currentInput = rootGettersDotMatch[1] || "";
       const accessToken = this.getAccessToken(prefix, currentInput.length);
       const replacementRange = this.createDotRange(
@@ -782,6 +777,7 @@ export class VuexCompletionItemProvider
     // 3c. rootGetters['xxx'] bracket notation
     const rootGettersBracketMatch = normalizedPrefix.match(/\brootGetters\[['"]([^'"]*)$/);
     if (rootGettersBracketMatch) {
+      if (token.isCancellationRequested) return undefined;
       const partialInput = rootGettersBracketMatch[1];
       const items: vscode.CompletionItem[] = [];
 
@@ -837,6 +833,7 @@ export class VuexCompletionItemProvider
     if (currentNamespace) {
       const inModuleStateMatch = prefix.match(/\bstate\.([a-zA-Z0-9_$\.]*)$/);
       if (inModuleStateMatch) {
+        if (token.isCancellationRequested) return undefined;
         const pathInput = inModuleStateMatch[1] || "";
         const pathParts = pathInput.split(".");
         const currentInput = pathParts[pathParts.length - 1] || "";
@@ -906,6 +903,7 @@ export class VuexCompletionItemProvider
     );
 
     if (match || bracketMatch) {
+      if (token.isCancellationRequested) return undefined;
       const mapping = this.componentMapper.getMapping(document);
       const items: vscode.CompletionItem[] = [];
 
@@ -929,6 +927,7 @@ export class VuexCompletionItemProvider
           : position.character;
 
         for (const localName in mapping) {
+          if (token.isCancellationRequested) return undefined;
           const info = mapping[localName];
           let kind = vscode.CompletionItemKind.Method;
           if (info.type === "state") kind = vscode.CompletionItemKind.Field;
@@ -970,6 +969,7 @@ export class VuexCompletionItemProvider
         );
 
         for (const localName in mapping) {
+          if (token.isCancellationRequested) return undefined;
           const info = mapping[localName];
           let kind = vscode.CompletionItemKind.Method;
           if (info.type === "state") kind = vscode.CompletionItemKind.Field;
@@ -1116,6 +1116,18 @@ export class VuexCompletionItemProvider
     namespace: string | undefined,
     storeMap: any,
   ) {
+    const itemType = this.toItemType(type);
+    if (itemType) {
+      if (namespace) {
+        const exact = this.storeIndexer.getIndexedItem(itemType, name, namespace);
+        if (exact) return exact;
+      }
+      if (name.includes("/")) {
+        const byPath = this.storeIndexer.getIndexedItemByFullPath(itemType, name);
+        if (byPath) return byPath;
+      }
+    }
+
     let lookupName = name;
     let lookupNamespace = namespace;
     if (type === "state" && lookupName.includes(".")) {
@@ -1155,6 +1167,14 @@ export class VuexCompletionItemProvider
     else if (type === "mutation") return storeMap.mutations.find(matchItem);
     else if (type === "getter") return storeMap.getters.find(matchItem);
     else if (type === "state") return storeMap.state.find(matchItem);
+    return undefined;
+  }
+
+  private toItemType(type: string): "state" | "getter" | "mutation" | "action" | undefined {
+    if (type === "state") return "state";
+    if (type === "getter") return "getter";
+    if (type === "mutation") return "mutation";
+    if (type === "action") return "action";
     return undefined;
   }
 

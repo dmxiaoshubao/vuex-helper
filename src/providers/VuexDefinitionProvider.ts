@@ -27,6 +27,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Definition | undefined> {
+        if (token.isCancellationRequested) return undefined;
         
         const range = document.getWordRangeAtPosition(position);
         if (!range) return undefined;
@@ -35,8 +36,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         // 1. Component Mapping (for this.methodName usage)
         const lineText = document.lineAt(position.line).text;
-        const prefix = lineText.substring(0, range.start.character).trimEnd();
-        
+        const rawPrefix = lineText.substring(0, range.start.character);
         // Simplified check: if it looks like a property access (this.xxx or vm.xxx)
         const mapping = this.componentMapper.getMapping(document);
         const mappedItem = mapping[word];
@@ -44,10 +44,19 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         if (mappedItem) {
              return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
+        const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
+        if (bracketMappedPathPrefix) {
+            const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
+            const bracketMappedItem = mapping[fullMappedKey];
+            if (bracketMappedItem) {
+                return this.findDefinition(bracketMappedItem.originalName, bracketMappedItem.type, bracketMappedItem.namespace);
+            }
+        }
 
         // 功能 3：检查是否是 state 链式访问的中间路径词（如 state.common.merchant 中的 common）
         if (!mappedItem) {
             for (const key in mapping) {
+                if (token.isCancellationRequested) return undefined;
                 const info = mapping[key];
                 if (info.type === 'state' && info.originalName.includes('.')) {
                     const parts = info.originalName.split('.');
@@ -68,7 +77,6 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         // 2. Local State Definition (state.xxx)
         // Check if preceding text ends with "state."
-        const rawPrefix = lineText.substring(0, range.start.character);
         const stateAccessPath = extractStateAccessPath(rawPrefix, word);
 
         // 2a. rootState.xxx — 从根开始查找 state
@@ -105,6 +113,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
         const context = this.scanner.getContext(document, position);
+        if (token.isCancellationRequested) return undefined;
         // Re-check context with awareness of current file namespace
         if (context && context.type !== 'unknown') {
             const preferLocalFromContext = !(
@@ -188,66 +197,13 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         currentNamespace?: string[],
         preferLocal: boolean = true
     ): vscode.Definition | undefined {
-        const storeMap = this.storeIndexer.getStoreMap();
-        if (!storeMap) return undefined;
-
         const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
         for (const lookup of lookups) {
             const lookupName = lookup.name;
             const lookupNamespace = lookup.namespace;
-
-            const matchItem = (item: { name: string, modulePath: string[] }) => {
-                if (lookupNamespace) {
-                    return item.name === lookupName && item.modulePath.join('/') === lookupNamespace;
-                }
-
-                if (preferLocal && currentNamespace && !lookupName.includes('/')) {
-                    const isLocal = item.name === lookupName && item.modulePath.join('/') === currentNamespace.join('/');
-                    if (isLocal) return true;
-                }
-
-                if (lookupName.includes('/')) {
-                    const parts = lookupName.split('/');
-                    const realName = parts.pop()!;
-                    const namespaceStr = parts.join('/');
-                    return item.name === realName && item.modulePath.join('/') === namespaceStr;
-                }
-
-                return item.name === lookupName;
-            };
-
-            let found: { defLocation: vscode.Location } | undefined;
+            let found = this.findIndexedItem(type, lookupName, lookupNamespace, currentNamespace, preferLocal);
 
             // 功能 2：root:true 场景优先匹配根模块
-            if (!preferLocal && !lookupNamespace && !lookupName.includes('/')) {
-                const checkRoot = (item: { name: string, modulePath: string[] }) =>
-                    item.name === lookupName && item.modulePath.length === 0;
-
-                if (type === 'action') found = storeMap.actions.find(checkRoot);
-                else if (type === 'mutation') found = storeMap.mutations.find(checkRoot);
-                else if (type === 'getter') found = storeMap.getters.find(checkRoot);
-                else if (type === 'state') found = storeMap.state.find(checkRoot);
-
-                if (found) return found.defLocation;
-            }
-
-            if (preferLocal && !lookupNamespace && currentNamespace && !lookupName.includes('/')) {
-                const checkLocal = (item: { name: string, modulePath: string[] }) =>
-                    item.name === lookupName && item.modulePath.join('/') === currentNamespace.join('/');
-
-                if (type === 'action') found = storeMap.actions.find(checkLocal);
-                else if (type === 'mutation') found = storeMap.mutations.find(checkLocal);
-                else if (type === 'getter') found = storeMap.getters.find(checkLocal);
-                else if (type === 'state') found = storeMap.state.find(checkLocal);
-
-                if (found) return found.defLocation;
-            }
-
-            if (type === 'action') found = storeMap.actions.find(matchItem);
-            else if (type === 'mutation') found = storeMap.mutations.find(matchItem);
-            else if (type === 'getter') found = storeMap.getters.find(matchItem);
-            else if (type === 'state') found = storeMap.state.find(matchItem);
-
             if (found) return found.defLocation;
         }
 
@@ -259,22 +215,50 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
      * 通过查找 storeMap 中属于该命名空间的任意项来定位文件。
      */
     private findModuleDefinition(namespace: string): vscode.Definition | undefined {
-        const storeMap = this.storeIndexer.getStoreMap();
-        if (!storeMap) return undefined;
+        const def = this.storeIndexer.getModuleDefinition(namespace);
+        if (!def) return undefined;
+        return new vscode.Location(def.uri, new vscode.Position(0, 0));
+    }
 
-        const allItems = [
-            ...storeMap.state,
-            ...storeMap.getters,
-            ...storeMap.mutations,
-            ...storeMap.actions,
-        ];
-        const moduleItem = allItems.find(
-            (item) => item.modulePath.join('/') === namespace
-        );
-        if (moduleItem) {
-            const uri = moduleItem.defLocation.uri;
-            return new vscode.Location(uri, new vscode.Position(0, 0));
+    private findIndexedItem(
+        type: 'state' | 'getter' | 'mutation' | 'action',
+        lookupName: string,
+        lookupNamespace?: string,
+        currentNamespace?: string[],
+        preferLocal: boolean = true,
+    ): { defLocation: vscode.Location } | undefined {
+        const typed = this.toItemType(type);
+        if (!typed) return undefined;
+
+        if (lookupNamespace) {
+            const exact = this.storeIndexer.getIndexedItem(typed, lookupName, lookupNamespace);
+            if (exact) return exact as any;
         }
+
+        if (preferLocal && currentNamespace && !lookupName.includes('/')) {
+            const local = this.storeIndexer.getIndexedItem(typed, lookupName, currentNamespace.join('/'));
+            if (local) return local as any;
+        }
+
+        if (!preferLocal && !lookupNamespace && !lookupName.includes('/')) {
+            const root = this.storeIndexer.getIndexedItem(typed, lookupName, '');
+            if (root) return root as any;
+        }
+
+        if (lookupName.includes('/')) {
+            const byPath = this.storeIndexer.getIndexedItemByFullPath(typed, lookupName);
+            if (byPath) return byPath as any;
+        }
+
+        const allItems = this.storeIndexer.getItemsByType(typed) as any[];
+        return allItems.find((item) => item.name === lookupName);
+    }
+
+    private toItemType(type: 'state' | 'getter' | 'mutation' | 'action'): 'state' | 'getter' | 'mutation' | 'action' | undefined {
+        if (type === 'state') return 'state';
+        if (type === 'getter') return 'getter';
+        if (type === 'mutation') return 'mutation';
+        if (type === 'action') return 'action';
         return undefined;
     }
 }

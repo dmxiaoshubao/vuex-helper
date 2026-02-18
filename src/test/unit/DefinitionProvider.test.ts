@@ -23,12 +23,14 @@ class MockStoreIndexer extends StoreIndexer {
             mutations: [
                 { name: 'SET_NAME', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 30) },
                 { name: 'SET_NAME', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js') },
-                { name: 'SET_NAME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') }
+                { name: 'SET_NAME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') },
+                { name: 'SET_THEME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 8) }
             ],
             actions: [
                 { name: 'fetchProfile', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 31) },
                 { name: 'fetchProfile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js') },
-                { name: 'fetchProfile', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') }
+                { name: 'fetchProfile', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') },
+                { name: 'changeTheme', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 9) }
             ]
         } as any;
     }
@@ -282,6 +284,19 @@ export default {
         assert.ok(definition, 'Definition should be resolved');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 20);
+    });
+
+    it('should jump for mapped mutation accessed via this bracket full path', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapMutations } from 'vuex'\nexport default { methods: { ...mapMutations(['others/SET_THEME']), run() { this['others/SET_THEME']() } } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.lastIndexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 8);
     });
 
     it('should jump from state.profile.name access to nested leaf definition', async () => {

@@ -1,16 +1,22 @@
 export class ReindexScheduler {
     private timer: NodeJS.Timeout | undefined;
+    private pendingFiles: Set<string> = new Set();
 
-    constructor(private readonly callback: () => void, private readonly delayMs: number = 150) {}
+    constructor(private readonly callback: (changedFiles: string[]) => void, private readonly delayMs: number = 150) {}
 
-    public schedule(): void {
+    public schedule(filePath?: string): void {
+        if (filePath) {
+            this.pendingFiles.add(filePath);
+        }
         if (this.timer) {
             clearTimeout(this.timer);
         }
 
         this.timer = setTimeout(() => {
             this.timer = undefined;
-            this.callback();
+            const changedFiles = Array.from(this.pendingFiles);
+            this.pendingFiles.clear();
+            this.callback(changedFiles);
         }, this.delayMs);
     }
 
@@ -23,5 +29,6 @@ export class ReindexScheduler {
             clearTimeout(this.timer);
             this.timer = undefined;
         }
+        this.pendingFiles.clear();
     }
 }

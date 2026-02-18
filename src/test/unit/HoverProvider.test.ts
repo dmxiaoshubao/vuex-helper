@@ -51,11 +51,13 @@ class MockCommitHoverStoreIndexer extends StoreIndexer {
             getters: [],
             mutations: [
                 { name: 'SET_NAME', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 40) },
-                { name: 'SET_NAME', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10) }
+                { name: 'SET_NAME', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10) },
+                { name: 'SET_THEME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 12) }
             ],
             actions: [
                 { name: 'fetchProfile', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 41) },
-                { name: 'fetchProfile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 11) }
+                { name: 'fetchProfile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 11) },
+                { name: 'changeTheme', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 13) }
             ]
         } as any;
     }
@@ -257,6 +259,20 @@ export default {
         assert.ok(hover, 'Hover should be resolved');
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root action');
+    });
+
+    it('should resolve hover for mapped mutation via this bracket full path', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `<script>\nimport { mapMutations } from 'vuex'\nexport default { methods: { ...mapMutations(['others/SET_THEME']), run() { this['others/SET_THEME']() } } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.lastIndexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Mutation: others/SET_THEME'), 'Hover should include mapped mutation full path');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/others.js'), 'Hover should resolve to namespaced mutation');
     });
 });
 

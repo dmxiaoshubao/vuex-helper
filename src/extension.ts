@@ -39,9 +39,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
     const storeIndexer = new StoreIndexer(workspaceRoot);
     const sharedComponentMapper = new ComponentMapper();
-    const scheduler = new ReindexScheduler(() => {
+    const scheduler = new ReindexScheduler((changedFiles) => {
         // Save/config-driven re-index should not interrupt users with setup prompts.
-        void storeIndexer.index({ interactive: false });
+        void storeIndexer.index({
+            interactive: false,
+            changedFiles,
+            forceFull: changedFiles.length === 0
+        });
     });
     context.subscriptions.push(scheduler);
     context.subscriptions.push(storeIndexer);
@@ -55,7 +59,7 @@ export async function activate(context: vscode.ExtensionContext) {
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript' || doc.languageId === 'vue') {
              // Skip unrelated saves to avoid unnecessary full store re-parsing.
              if (storeIndexer.shouldReindexForFile(doc.fileName)) {
-                scheduler.schedule();
+                scheduler.schedule(doc.fileName);
              }
         }
     }));

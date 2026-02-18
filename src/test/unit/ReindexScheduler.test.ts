@@ -4,16 +4,19 @@ import { ReindexScheduler } from '../../services/ReindexScheduler';
 describe('ReindexScheduler', () => {
     it('should debounce frequent schedule requests', async () => {
         let callCount = 0;
-        const scheduler = new ReindexScheduler(() => {
+        let changedFiles: string[] = [];
+        const scheduler = new ReindexScheduler((files) => {
             callCount++;
+            changedFiles = files;
         }, 10);
 
         scheduler.schedule();
-        scheduler.schedule();
-        scheduler.schedule();
+        scheduler.schedule('/a.js');
+        scheduler.schedule('/b.js');
 
         await new Promise((resolve) => setTimeout(resolve, 35));
         assert.strictEqual(callCount, 1, 'Only one callback execution is expected after debounce');
+        assert.deepStrictEqual(changedFiles.sort(), ['/a.js', '/b.js']);
     });
 
     it('should release pending timer on dispose', async () => {

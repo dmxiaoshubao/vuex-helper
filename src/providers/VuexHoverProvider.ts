@@ -26,6 +26,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         position: vscode.Position,
         token: vscode.CancellationToken
     ): Promise<vscode.Hover | undefined> {
+        if (token.isCancellationRequested) return undefined;
         
         const range = document.getWordRangeAtPosition(position);
         if (!range) return undefined;
@@ -34,10 +35,12 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         // 1. Vuex Context (String literals)
         // Moved logical check down to combine with context awareness
         const context = this.contextScanner.getContext(document, position);
+        if (token.isCancellationRequested) return undefined;
 
         // 2. Component Mapping (this.methodName)
         const lineText = document.lineAt(position.line).text;
-        const prefix = lineText.substring(0, range.start.character).trimEnd();
+        const rawPrefix = lineText.substring(0, range.start.character);
+        const prefix = rawPrefix.trimEnd();
         
         const mapping = this.componentMapper.getMapping(document);
         const mappedItem = mapping[word];
@@ -45,11 +48,18 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         if (mappedItem) {
             return this.findHover(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
+        const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
+        if (bracketMappedPathPrefix) {
+            const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
+            const bracketMappedItem = mapping[fullMappedKey];
+            if (bracketMappedItem) {
+                return this.findHover(bracketMappedItem.originalName, bracketMappedItem.type, bracketMappedItem.namespace);
+            }
+        }
 
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
 
         // 3. Local State Hover (state.xxx)
-        const rawPrefix = lineText.substring(0, range.start.character);
         const stateAccessPath = extractStateAccessPath(rawPrefix, word);
 
         // 3a. rootState.xxx hover — 从根开始查找 state
@@ -101,9 +111,6 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         currentNamespace?: string[],
         preferLocal: boolean = true
     ): vscode.Hover | undefined {
-        const storeMap = this.storeIndexer.getStoreMap();
-        if (!storeMap) return undefined;
-
         const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
         let result: { defLocation: vscode.Location, documentation?: string } | undefined;
         let labelPrefix = '';
@@ -111,43 +118,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         for (const lookup of lookups) {
             const lookupName = lookup.name;
             const lookupNamespace = lookup.namespace;
-
-            const matchItem = (item: { name: string, modulePath: string[] }) => {
-                if (lookupNamespace) {
-                    return item.name === lookupName && item.modulePath.join('/') === lookupNamespace;
-                }
-
-                if (preferLocal && currentNamespace && !lookupName.includes('/')) {
-                    const isLocal = item.name === lookupName && item.modulePath.join('/') === currentNamespace.join('/');
-                    if (isLocal) return true;
-                }
-
-                if (lookupName.includes('/')) {
-                    const parts = lookupName.split('/');
-                    const realName = parts.pop()!;
-                    const namespaceStr = parts.join('/');
-                    return item.name === realName && item.modulePath.join('/') === namespaceStr;
-                }
-                return item.name === lookupName;
-            };
-
-            if (preferLocal && !lookupNamespace && currentNamespace && !lookupName.includes('/')) {
-                const checkLocal = (item: { name: string, modulePath: string[] }) =>
-                    item.name === lookupName && item.modulePath.join('/') === currentNamespace.join('/');
-
-                if (type === 'action') result = storeMap.actions.find(checkLocal);
-                else if (type === 'mutation') result = storeMap.mutations.find(checkLocal);
-                else if (type === 'state') result = storeMap.state.find(checkLocal);
-                else if (type === 'getter') result = storeMap.getters.find(checkLocal);
-            }
-
-            if (!result) {
-                if (type === 'action') result = storeMap.actions.find(matchItem);
-                else if (type === 'mutation') result = storeMap.mutations.find(matchItem);
-                else if (type === 'state') result = storeMap.state.find(matchItem);
-                else if (type === 'getter') result = storeMap.getters.find(matchItem);
-            }
-
+            result = this.findIndexedItem(type, lookupName, lookupNamespace, currentNamespace, preferLocal);
             if (result) break;
         }
 
@@ -174,6 +145,43 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(result.defLocation.uri)}**`);
             return new vscode.Hover(md);
         }
+        return undefined;
+    }
+
+    private findIndexedItem(
+        type: 'state' | 'getter' | 'mutation' | 'action',
+        lookupName: string,
+        lookupNamespace?: string,
+        currentNamespace?: string[],
+        preferLocal: boolean = true,
+    ): { defLocation: vscode.Location, documentation?: string } | undefined {
+        const typed = this.toItemType(type);
+        if (!typed) return undefined;
+
+        if (lookupNamespace) {
+            const exact = this.storeIndexer.getIndexedItem(typed, lookupName, lookupNamespace);
+            if (exact) return exact as any;
+        }
+
+        if (preferLocal && currentNamespace && !lookupName.includes('/')) {
+            const local = this.storeIndexer.getIndexedItem(typed, lookupName, currentNamespace.join('/'));
+            if (local) return local as any;
+        }
+
+        if (lookupName.includes('/')) {
+            const byPath = this.storeIndexer.getIndexedItemByFullPath(typed, lookupName);
+            if (byPath) return byPath as any;
+        }
+
+        const allItems = this.storeIndexer.getItemsByType(typed) as any[];
+        return allItems.find((item) => item.name === lookupName);
+    }
+
+    private toItemType(type: 'state' | 'getter' | 'mutation' | 'action'): 'state' | 'getter' | 'mutation' | 'action' | undefined {
+        if (type === 'state') return 'state';
+        if (type === 'getter') return 'getter';
+        if (type === 'mutation') return 'mutation';
+        if (type === 'action') return 'action';
         return undefined;
     }
 }

@@ -8,6 +8,7 @@ import { PathResolver } from '../utils/PathResolver';
 
 export interface EntryAnalyzeOptions {
     interactive?: boolean;
+    forceRefresh?: boolean;
 }
 
 export class EntryAnalyzer {
@@ -15,6 +16,7 @@ export class EntryAnalyzer {
     private pathResolver: PathResolver;
     private promptedForMissingStore = false;
     private warnedInvalidConfiguredEntry = new Set<string>();
+    private cachedStorePath: string | null | undefined;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -26,6 +28,15 @@ export class EntryAnalyzer {
      */
     public async analyze(options: EntryAnalyzeOptions = {}): Promise<string | null> {
         const interactive = options.interactive === true;
+        const forceRefresh = options.forceRefresh === true;
+
+        if (!forceRefresh && this.cachedStorePath !== undefined) {
+            if (!this.cachedStorePath) return null;
+            if (await this.isAllowedStorePath(this.cachedStorePath)) {
+                return this.cachedStorePath;
+            }
+            this.cachedStorePath = undefined;
+        }
         // 0. Check for configuration "vuexHelper.storeEntry"
         const config = vscode.workspace.getConfiguration('vuexHelper');
         const configuredEntry = config.get<string>('storeEntry');
@@ -58,6 +69,7 @@ export class EntryAnalyzer {
             }
 
             if (resolvedPath && await this.isAllowedStorePath(resolvedPath)) {
+                this.cachedStorePath = resolvedPath;
                 return resolvedPath;
             } else {
                 if (interactive && !this.warnedInvalidConfiguredEntry.has(configuredEntry)) {
@@ -77,6 +89,7 @@ export class EntryAnalyzer {
         for (const file of entryFiles) {
             const storePath = await this.findStoreInjection(file);
             if (storePath) {
+                this.cachedStorePath = storePath;
                 return storePath;
             }
         }
@@ -84,6 +97,7 @@ export class EntryAnalyzer {
         // If nothing found
         // If nothing found
         if (!interactive || this.promptedForMissingStore) {
+            this.cachedStorePath = null;
             return null;
         }
         this.promptedForMissingStore = true;
@@ -114,7 +128,12 @@ export class EntryAnalyzer {
             }
         }
 
+        this.cachedStorePath = null;
         return null;
+    }
+
+    public invalidateCache(): void {
+        this.cachedStorePath = undefined;
     }
 
     private async isAllowedStorePath(candidate: string): Promise<boolean> {

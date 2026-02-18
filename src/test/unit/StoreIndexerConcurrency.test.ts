@@ -105,4 +105,52 @@ describe('StoreIndexer Concurrency', () => {
         assert.strictEqual(indexer.shouldReindexForFile('/tmp/tsconfig.json'), true);
         assert.strictEqual(indexer.shouldReindexForFile('/tmp/src/main.js'), true);
     });
+
+    it('should call parser in incremental mode for indexed changed files', async () => {
+        const indexer = new StoreIndexer('/tmp') as any;
+        const parseCalls: any[] = [];
+
+        indexer.storeMap = { state: [], getters: [], mutations: [], actions: [] };
+        indexer.lastStoreEntryPath = '/tmp/src/store/index.js';
+        indexer.entryAnalyzer = {
+            invalidateCache: () => undefined,
+            analyze: async () => {
+                throw new Error('analyze should not be called for incremental path');
+            }
+        };
+        indexer.storeParser = {
+            hasIndexedFile: (filePath: string) => filePath === '/tmp/src/store/modules/user.js',
+            parse: async (_storePath: string, options?: any) => {
+                parseCalls.push(options);
+                return { state: [], getters: [], mutations: [], actions: [] };
+            }
+        };
+
+        await indexer.index({ changedFiles: ['/tmp/src/store/modules/user.js'] });
+        assert.deepStrictEqual(parseCalls[0], { changedFiles: ['/tmp/src/store/modules/user.js'] });
+    });
+
+    it('should fallback to full parse when changed file is not indexed yet', async () => {
+        const indexer = new StoreIndexer('/tmp') as any;
+        const parseCalls: any[] = [];
+
+        indexer.storeMap = { state: [], getters: [], mutations: [], actions: [] };
+        indexer.lastStoreEntryPath = '/tmp/src/store/index.js';
+        indexer.entryAnalyzer = {
+            invalidateCache: () => undefined,
+            analyze: async () => {
+                throw new Error('analyze should not be called for fallback full parse with cached entry');
+            }
+        };
+        indexer.storeParser = {
+            hasIndexedFile: () => false,
+            parse: async (_storePath: string, options?: any) => {
+                parseCalls.push(options);
+                return { state: [], getters: [], mutations: [], actions: [] };
+            }
+        };
+
+        await indexer.index({ changedFiles: ['/tmp/src/store/modules/new-module.js'] });
+        assert.strictEqual(parseCalls[0], undefined, 'Unindexed change should trigger full parse');
+    });
 });

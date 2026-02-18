@@ -5,6 +5,15 @@ import traverse from '@babel/traverse';
 import { PathResolver } from '../utils/PathResolver';
 import { VuexStoreMap, VuexStateInfo, VuexGetterInfo, VuexMutationInfo, VuexActionInfo } from '../types';
 
+export interface StoreParseOptions {
+    changedFiles?: string[];
+}
+
+interface ParseContext {
+    allowedFiles?: Set<string>;
+    previouslyIndexedFiles?: Set<string>;
+}
+
 export class StoreParser {
     private pathResolver: PathResolver;
     private storeMap: VuexStoreMap = {
@@ -15,23 +24,68 @@ export class StoreParser {
     };
     private fileNamespaceMap: Map<string, string[]> = new Map();
     private visitedModuleScope: Set<string> = new Set();
+    private fileDependencyMap: Map<string, Set<string>> = new Map();
+    private reverseDependencyMap: Map<string, Set<string>> = new Map();
+    private lastStoreEntryPath: string | null = null;
 
     constructor(workspaceRoot: string) {
         this.pathResolver = new PathResolver(workspaceRoot);
     }
 
-    public async parse(storeEntryPath: string): Promise<VuexStoreMap> {
-        this.storeMap = { state: [], getters: [], mutations: [], actions: [] };
-        this.fileNamespaceMap.clear();
-        this.visitedModuleScope.clear();
+    public async parse(storeEntryPath: string, options: StoreParseOptions = {}): Promise<VuexStoreMap> {
+        const normalizedEntry = vscode.Uri.file(storeEntryPath).fsPath;
+        const normalizedChanged = (options.changedFiles || [])
+            .map((filePath) => vscode.Uri.file(filePath).fsPath);
+
+        const canIncremental =
+            normalizedChanged.length > 0 &&
+            this.lastStoreEntryPath === normalizedEntry &&
+            this.fileNamespaceMap.size > 0;
+
+        if (!canIncremental) {
+            this.resetAllIndexState();
+            this.pathResolver.clearCache();
+            await this.parseModule(storeEntryPath, [], {});
+            this.lastStoreEntryPath = normalizedEntry;
+            return this.storeMap;
+        }
+
+        const affectedFiles = new Set(this.getAffectedFiles(normalizedChanged));
+        if (affectedFiles.size === 0) {
+            return this.storeMap;
+        }
+
+        const namespaceSnapshot = new Map(this.fileNamespaceMap);
+        this.prepareIncrementalState(affectedFiles);
         this.pathResolver.clearCache();
 
-        await this.parseModule(storeEntryPath, []);
+        const parseContext: ParseContext = {
+            allowedFiles: new Set(affectedFiles),
+            previouslyIndexedFiles: new Set(namespaceSnapshot.keys())
+        };
+
+        for (const affectedFile of affectedFiles) {
+            const namespace = namespaceSnapshot.get(affectedFile) || [];
+            await this.parseModule(affectedFile, namespace, parseContext);
+        }
+
+        this.pruneUnreachableFiles(normalizedEntry);
+        this.lastStoreEntryPath = normalizedEntry;
         return this.storeMap;
     }
 
-    private async parseModule(filePath: string, moduleNamespace: string[]): Promise<void> {
+    private async parseModule(filePath: string, moduleNamespace: string[], context: ParseContext): Promise<void> {
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+
+        if (context.allowedFiles && !context.allowedFiles.has(normalizedPath)) {
+            const wasIndexed = context.previouslyIndexedFiles?.has(normalizedPath) || this.fileNamespaceMap.has(normalizedPath);
+            if (wasIndexed) {
+                return;
+            }
+            context.allowedFiles.add(normalizedPath);
+        }
+
         try {
             const stat = await fs.promises.stat(filePath);
             if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return;
@@ -39,7 +93,6 @@ export class StoreParser {
             return; // 文件不存在或无权限
         }
 
-        const normalizedPath = vscode.Uri.file(filePath).fsPath;
         const visitKey = `${normalizedPath}::${moduleNamespace.join('/')}`;
         if (this.visitedModuleScope.has(visitKey)) {
             return;
@@ -47,6 +100,7 @@ export class StoreParser {
         this.visitedModuleScope.add(visitKey);
 
         this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
+        const directDependencies = new Set<string>();
 
         try {
             const content = await fs.promises.readFile(filePath, 'utf-8');
@@ -58,7 +112,7 @@ export class StoreParser {
             const { imports, localVars, exportedStoreObject, dynamicRegistrations } = await this.collectDeclarations(ast, filePath);
 
             if (exportedStoreObject) {
-                await this.processStoreObject(exportedStoreObject, filePath, moduleNamespace, imports, localVars);
+                await this.processStoreObject(exportedStoreObject, filePath, moduleNamespace, imports, localVars, directDependencies, context);
             }
 
             // 处理动态模块注册（namespace 需拼接 baseNamespace）
@@ -66,11 +120,13 @@ export class StoreParser {
                 await this.processModuleReference(
                     registration.moduleNode, filePath,
                     [...moduleNamespace, ...registration.namespace],
-                    imports, localVars
+                    imports, localVars, directDependencies, context
                 );
             }
         } catch (error) {
             console.error(`Error parsing module ${filePath}:`, error);
+        } finally {
+            this.setFileDependencies(normalizedPath, directDependencies);
         }
     }
 
@@ -378,7 +434,9 @@ export class StoreParser {
         filePath: string,
         moduleNamespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>
+        localVars: Record<string, any>,
+        directDependencies: Set<string>,
+        context: ParseContext
     ): Promise<void> {
         const isNamespaced = this.readNamespacedFlag(objExpression, localVars);
         const assetNamespace = moduleNamespace.length > 0 && isNamespaced ? moduleNamespace : [];
@@ -400,7 +458,7 @@ export class StoreParser {
             } else if (keyName === 'actions') {
                 this.processActions(valueNode, filePath, assetNamespace, localVars);
             } else if (keyName === 'modules') {
-                await this.processModules(valueNode, filePath, moduleNamespace, imports, localVars);
+                await this.processModules(valueNode, filePath, moduleNamespace, imports, localVars, directDependencies, context);
             }
         }
     }
@@ -595,14 +653,16 @@ export class StoreParser {
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>
+        localVars: Record<string, any>,
+        directDependencies: Set<string>,
+        context: ParseContext
     ): Promise<void> {
         if (!valueNode) return;
 
         const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
         if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
 
-        await this.processModulesObjectExpression(resolvedValue, filePath, namespace, imports, localVars);
+        await this.processModulesObjectExpression(resolvedValue, filePath, namespace, imports, localVars, directDependencies, context);
     }
 
     private async processModulesObjectExpression(
@@ -610,7 +670,9 @@ export class StoreParser {
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>
+        localVars: Record<string, any>,
+        directDependencies: Set<string>,
+        context: ParseContext
     ): Promise<void> {
         if (!modulesObject || modulesObject.type !== 'ObjectExpression') return;
 
@@ -618,7 +680,7 @@ export class StoreParser {
             if (property.type === 'SpreadElement') {
                 const spreadValue = this.resolveNode(property.argument, localVars, 0, new Set());
                 if (spreadValue && spreadValue.type === 'ObjectExpression') {
-                    await this.processModulesObjectExpression(spreadValue, filePath, namespace, imports, localVars);
+                    await this.processModulesObjectExpression(spreadValue, filePath, namespace, imports, localVars, directDependencies, context);
                 }
                 continue;
             }
@@ -629,7 +691,7 @@ export class StoreParser {
             if (!moduleName) continue;
 
             const newNamespace = [...namespace, moduleName];
-            await this.processModuleReference(property.value, filePath, newNamespace, imports, localVars);
+            await this.processModuleReference(property.value, filePath, newNamespace, imports, localVars, directDependencies, context);
         }
     }
 
@@ -638,33 +700,37 @@ export class StoreParser {
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>
+        localVars: Record<string, any>,
+        directDependencies: Set<string>,
+        context: ParseContext
     ): Promise<void> {
         const resolvedModule = this.resolveNode(moduleNode, localVars, 0, new Set());
         if (!resolvedModule) return;
 
         if (resolvedModule.type === 'ObjectExpression') {
-            await this.processStoreObject(resolvedModule, filePath, namespace, imports, localVars);
+            await this.processStoreObject(resolvedModule, filePath, namespace, imports, localVars, directDependencies, context);
             return;
         }
 
         if (resolvedModule.type === 'Identifier') {
             const importedPath = await this.resolveImportedModulePath(resolvedModule.name, imports, localVars, filePath);
             if (importedPath) {
-                await this.parseModule(importedPath, namespace);
+                directDependencies.add(vscode.Uri.file(importedPath).fsPath);
+                await this.parseModule(importedPath, namespace, context);
                 return;
             }
 
             const resolvedLocalValue = this.resolveNode(localVars[resolvedModule.name], localVars, 0, new Set());
             if (resolvedLocalValue && resolvedLocalValue.type === 'ObjectExpression') {
-                await this.processStoreObject(resolvedLocalValue, filePath, namespace, imports, localVars);
+                await this.processStoreObject(resolvedLocalValue, filePath, namespace, imports, localVars, directDependencies, context);
             }
             return;
         }
 
         const dynamicPath = await this.resolveModulePathFromNode(resolvedModule, localVars, filePath);
         if (dynamicPath) {
-            await this.parseModule(dynamicPath, namespace);
+            directDependencies.add(vscode.Uri.file(dynamicPath).fsPath);
+            await this.parseModule(dynamicPath, namespace, context);
         }
     }
 
@@ -717,6 +783,101 @@ export class StoreParser {
         return await this.resolveModulePathFromNode(localValue, localVars, filePath);
     }
 
+    private resetAllIndexState(): void {
+        this.storeMap = { state: [], getters: [], mutations: [], actions: [] };
+        this.fileNamespaceMap.clear();
+        this.visitedModuleScope.clear();
+        this.fileDependencyMap.clear();
+        this.reverseDependencyMap.clear();
+    }
+
+    private prepareIncrementalState(affectedFiles: Set<string>): void {
+        this.storeMap = this.filterStoreMapExcludingFiles(affectedFiles);
+        for (const file of affectedFiles) {
+            this.fileNamespaceMap.delete(file);
+            this.clearDependenciesForFile(file);
+        }
+        this.visitedModuleScope.clear();
+    }
+
+    private filterStoreMapExcludingFiles(excludedFiles: Set<string>): VuexStoreMap {
+        const keep = <T extends { defLocation: vscode.Location }>(items: T[]) =>
+            items.filter((item) => !excludedFiles.has(item.defLocation.uri.fsPath));
+
+        return {
+            state: keep(this.storeMap.state),
+            getters: keep(this.storeMap.getters),
+            mutations: keep(this.storeMap.mutations),
+            actions: keep(this.storeMap.actions)
+        };
+    }
+
+    private clearDependenciesForFile(file: string): void {
+        const deps = this.fileDependencyMap.get(file);
+        if (deps) {
+            for (const dep of deps) {
+                const parents = this.reverseDependencyMap.get(dep);
+                if (!parents) continue;
+                parents.delete(file);
+                if (parents.size === 0) {
+                    this.reverseDependencyMap.delete(dep);
+                }
+            }
+        }
+
+        this.fileDependencyMap.delete(file);
+        this.reverseDependencyMap.delete(file);
+    }
+
+    private setFileDependencies(file: string, dependencies: Set<string>): void {
+        this.clearDependenciesForFile(file);
+        this.fileDependencyMap.set(file, new Set(dependencies));
+
+        for (const dep of dependencies) {
+            if (!this.reverseDependencyMap.has(dep)) {
+                this.reverseDependencyMap.set(dep, new Set());
+            }
+            this.reverseDependencyMap.get(dep)!.add(file);
+        }
+    }
+
+    private pruneUnreachableFiles(entryFile: string): void {
+        const reachable = this.collectReachableFiles(entryFile);
+        if (reachable.size === 0) return;
+
+        const indexedFiles = Array.from(this.fileNamespaceMap.keys());
+        const unreachable = indexedFiles.filter((file) => !reachable.has(file));
+        if (unreachable.length === 0) return;
+
+        const unreachableSet = new Set(unreachable);
+        this.storeMap = this.filterStoreMapExcludingFiles(unreachableSet);
+        for (const file of unreachableSet) {
+            this.fileNamespaceMap.delete(file);
+            this.clearDependenciesForFile(file);
+        }
+    }
+
+    private collectReachableFiles(entryFile: string): Set<string> {
+        const reachable = new Set<string>();
+        const queue: string[] = [entryFile];
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            if (reachable.has(current)) continue;
+            reachable.add(current);
+
+            const deps = this.fileDependencyMap.get(current);
+            if (!deps) continue;
+            for (const dep of deps) {
+                if (!reachable.has(dep)) {
+                    queue.push(dep);
+                }
+            }
+        }
+
+        return reachable;
+    }
+
     private extractDocumentation(node: any): string | undefined {
         if (!(node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0)) {
             return undefined;
@@ -748,5 +909,32 @@ export class StoreParser {
     public hasIndexedFile(filePath: string): boolean {
         const normalizedPath = vscode.Uri.file(filePath).fsPath;
         return this.fileNamespaceMap.has(normalizedPath);
+    }
+
+    public getAffectedFiles(changedFiles: string[]): string[] {
+        const affected = new Set<string>();
+        const queue = changedFiles
+            .map((filePath) => vscode.Uri.file(filePath).fsPath)
+            .filter((filePath) =>
+                this.fileNamespaceMap.has(filePath) ||
+                this.reverseDependencyMap.has(filePath) ||
+                this.fileDependencyMap.has(filePath)
+            );
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            if (affected.has(current)) continue;
+            affected.add(current);
+
+            const parents = this.reverseDependencyMap.get(current);
+            if (!parents) continue;
+            for (const parent of parents) {
+                if (!affected.has(parent)) {
+                    queue.push(parent);
+                }
+            }
+        }
+
+        return Array.from(affected);
     }
 }

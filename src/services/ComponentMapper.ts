@@ -17,7 +17,7 @@ export interface ComponentMapInfo {
 export class ComponentMapper {
     
     private readonly maxCacheEntries = 100;
-    private cache: Map<string, { version: number, mapping: ComponentMapInfo }> = new Map();
+    private cache: Map<string, { version: number, signature: string, mapping: ComponentMapInfo }> = new Map();
 
     /**
      * Analyzes the given document to find Vuex mapHelpers and build a mapping.
@@ -25,14 +25,6 @@ export class ComponentMapper {
     public getMapping(document: vscode.TextDocument): ComponentMapInfo {
         const text = document.getText();
         const uri = document.uri.toString();
-
-        const cached = this.cache.get(uri);
-        if (cached && cached.version === document.version) {
-            // Touch entry for basic LRU behavior.
-            this.cache.delete(uri);
-            this.cache.set(uri, cached);
-            return cached.mapping;
-        }
 
         // For Vue files, extract script content
         let scriptContent = text;
@@ -47,6 +39,18 @@ export class ComponentMapper {
             if (parts.length > 0) {
                 scriptContent = parts.join('\n');
             }
+        }
+        const semanticSignature = this.computeSemanticSignature(scriptContent);
+
+        const cached = this.cache.get(uri);
+        if (cached && (cached.version === document.version || cached.signature === semanticSignature)) {
+            // Touch entry for basic LRU behavior.
+            if (cached.version !== document.version) {
+                cached.version = document.version;
+            }
+            this.cache.delete(uri);
+            this.cache.set(uri, cached);
+            return cached.mapping;
         }
 
         // 预处理：修复不完整的代码，使其能够被解析
@@ -299,7 +303,7 @@ export class ComponentMapper {
             }
 
             // Success, update cache
-            this.cache.set(uri, { version: document.version, mapping });
+            this.cache.set(uri, { version: document.version, signature: semanticSignature, mapping });
             this.trimCache();
             return mapping;
 
@@ -408,5 +412,15 @@ export class ComponentMapper {
             .sort((a, b) => b.length - a.length)
             .map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
             .join('|');
+    }
+
+    private computeSemanticSignature(scriptContent: string): string {
+        const lines = scriptContent.split(/\r?\n/);
+        const importantLines = lines
+            .map((line) => line.trim())
+            .filter((line) =>
+                /(mapState|mapGetters|mapMutations|mapActions|createNamespacedHelpers|from\s+['"]vuex['"]|require\(\s*['"]vuex['"]\s*\)|=\s*this\b)/.test(line)
+            );
+        return importantLines.join('\n');
     }
 }

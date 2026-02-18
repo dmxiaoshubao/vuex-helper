@@ -46,4 +46,25 @@ describe('ComponentMapper Cache', () => {
         mapper.dispose();
         assert.strictEqual(mapper.getCacheSize(), 0, 'Cache should be empty after dispose');
     });
+
+    it('should reuse cached mapping when semantic signature is unchanged', () => {
+        const mapper = new ComponentMapper();
+        const uri = 'file:///semantic-stable.vue';
+
+        const first = createDocument(
+            uri,
+            1,
+            `<script>import { mapState } from 'vuex'; export default { computed: { ...mapState(['count']) } }</script>`,
+        );
+        const firstMapping = mapper.getMapping(first);
+        assert.ok(firstMapping.count, 'Initial mapping should include count');
+
+        const second = createDocument(
+            uri,
+            2,
+            `<script>import { mapState } from 'vuex'; const debug = 1; export default { computed: { ...mapState([</script>`,
+        );
+        const secondMapping = mapper.getMapping(second);
+        assert.ok(secondMapping.count, 'Semantic-stable edit should reuse previous mapping');
+    });
 });

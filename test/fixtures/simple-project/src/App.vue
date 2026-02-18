@@ -417,7 +417,7 @@ export default {
       this.a1()
       this.increment();
       this.incrementAsync();
-      this["others/SET_THEME"]("dark");
+      this['others/SET_THEME']
       this["others/changeTheme"]("light");
     },
 

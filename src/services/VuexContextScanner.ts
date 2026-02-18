@@ -34,6 +34,7 @@ export class VuexContextScanner {
 
     // 单条目缓存：同一位置被 completion/hover/definition 连续查询时直接返回
     private contextCache?: { uri: string; version: number; offset: number; result: VuexContext | undefined };
+    private textCache?: { uri: string; version: number; text: string };
 
     /**
      * Determines the Vuex context at the given position.
@@ -63,7 +64,7 @@ export class VuexContextScanner {
     }
 
     private computeContext(document: vscode.TextDocument, position: vscode.Position, offset: number): VuexContext | undefined {
-        const text = document.getText();
+        const text = this.getDocumentText(document);
 
         // 对于 Vue 文件，只扫描 <script> 标签内的内容
         let scriptStart = 0;
@@ -107,6 +108,20 @@ export class VuexContextScanner {
         const result = this.analyzeTokens(tokens, helperContext);
 
         return result;
+    }
+
+    private getDocumentText(document: vscode.TextDocument): string {
+        const uri = document.uri?.toString();
+        const version = document.version;
+        if (uri && this.textCache && this.textCache.uri === uri && this.textCache.version === version) {
+            return this.textCache.text;
+        }
+
+        const text = document.getText();
+        if (uri) {
+            this.textCache = { uri, version, text };
+        }
+        return text;
     }
 
     private tokenize(code: string): { type: 'word' | 'symbol' | 'string', value: string, index: number }[] {
