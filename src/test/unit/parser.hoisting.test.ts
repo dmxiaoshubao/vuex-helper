@@ -1,19 +1,6 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as Module from 'module';
-
-// --- Hack to mock 'vscode' module ---
-const originalRequire = Module.prototype.require;
-const vscodeMock = require('./vscode-mock');
-
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return vscodeMock;
-    }
-    return originalRequire.apply(this, arguments as any);
-};
-// ------------------------------------
 
 import { StoreParser } from '../../services/StoreParser';
 

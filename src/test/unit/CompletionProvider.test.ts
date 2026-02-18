@@ -1,55 +1,5 @@
 import * as assert from 'assert';
-import * as Module from 'module';
-import * as vscode from 'vscode'; // Type only, mocked below
-
-// --- Hack to mock 'vscode' module ---
-const originalRequire = Module.prototype.require;
-const vscodeMock = require('./vscode-mock');
-
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return {
-            ...vscodeMock,
-            CompletionItemKind: {
-                Property: 1,
-                Field: 2,
-                Method: 3,
-                Function: 4,
-                Module: 5
-            },
-
-            MarkdownString: class {},
-            SnippetString: class {
-                constructor(public value: string) {}
-            },
-            Position: class {
-                constructor(public line: number, public character: number) {}
-            },
-            Range: class {
-                start: any;
-                end: any;
-                constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
-                    this.start = { line: startLine, character: startCharacter };
-                    this.end = { line: endLine, character: endCharacter };
-                }
-            },
-            CompletionItem: class {
-                public range: any;
-                public detail: any;
-                public sortText: any;
-                public filterText: any;
-                public documentation: any;
-                public insertText: any;
-                constructor(public label: string, public kind?: number) {}
-            },
-            CompletionList: class {
-                constructor(public items: any[], public isIncomplete: boolean = false) {}
-            }
-        };
-    }
-    return originalRequire.apply(this, arguments as any);
-};
-// ------------------------------------
+import * as vscode from 'vscode';
 
 import { VuexCompletionItemProvider } from '../../providers/VuexCompletionItemProvider';
 import { StoreIndexer } from '../../services/StoreIndexer';

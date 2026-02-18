@@ -1,13 +1,4 @@
 import * as assert from 'assert';
-import * as Module from 'module';
-
-const originalRequire = Module.prototype.require;
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return {};
-    }
-    return originalRequire.apply(this, arguments as any);
-};
 
 import { ComponentMapper } from '../../services/ComponentMapper';
 

@@ -1,34 +1,5 @@
 import * as assert from 'assert';
 import * as path from 'path';
-import * as Module from 'module';
-
-const originalRequire = Module.prototype.require;
-
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return {
-            Uri: class {
-                constructor(public fsPath: string, public scheme: string = 'file') {}
-                static file(path: string) { return new (this as any)(path); }
-                toString() { return `${this.scheme}://${this.fsPath}`; }
-            },
-            Position: class {
-                constructor(public line: number, public character: number) {}
-            },
-            Location: class {
-                constructor(public uri: any, public rangeOrPosition: any) {}
-            },
-            workspace: {
-                getConfiguration: () => ({ get: (_key: string, defaultValue?: any) => defaultValue }),
-                asRelativePath: (value: any) => value?.toString?.() || String(value)
-            },
-            window: {
-                showInformationMessage: () => undefined
-            }
-        };
-    }
-    return originalRequire.apply(this, arguments as any);
-};
 
 import { hasVuexDependency } from '../../extension';
 

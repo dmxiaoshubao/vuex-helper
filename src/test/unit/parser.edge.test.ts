@@ -2,17 +2,6 @@ import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import * as Module from 'module';
-
-const originalRequire = Module.prototype.require;
-const vscodeMock = require('./vscode-mock');
-
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return vscodeMock;
-    }
-    return originalRequire.apply(this, arguments as any);
-};
 
 import { StoreIndexer } from '../../services/StoreIndexer';
 import { StoreParser } from '../../services/StoreParser';

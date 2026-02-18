@@ -1,41 +1,4 @@
 import * as assert from 'assert';
-import * as Module from 'module';
-
-const originalRequire = Module.prototype.require;
-
-(Module.prototype as any).require = function(id: string) {
-    if (id === 'vscode') {
-        return {
-            Uri: class {
-                constructor(public fsPath: string, public scheme: string = 'file') {}
-                static file(path: string) { return new (this as any)(path); }
-                toString() { return `${this.scheme}://${this.fsPath}`; }
-            },
-            Position: class {
-                constructor(public line: number, public character: number) {}
-            },
-            Range: class {
-                start: any;
-                end: any;
-                constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
-                    this.start = { line: startLine, character: startCharacter };
-                    this.end = { line: endLine, character: endCharacter };
-                }
-            },
-            Location: class {
-                constructor(public uri: any, public rangeOrPosition: any) {}
-            },
-            workspace: {
-                getConfiguration: () => ({ get: (_key: string, defaultValue?: any) => defaultValue }),
-                asRelativePath: (value: any) => value?.toString?.() || String(value)
-            },
-            window: {
-                showInformationMessage: () => undefined
-            }
-        };
-    }
-    return originalRequire.apply(this, arguments as any);
-};
 
 import { StoreIndexer } from '../../services/StoreIndexer';
 import { VuexDefinitionProvider } from '../../providers/VuexDefinitionProvider';
