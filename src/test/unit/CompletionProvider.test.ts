@@ -302,7 +302,7 @@ describe('VuexCompletionItemProvider', () => {
         assert.ok(localItem, 'Local dispatch should suggest short action name');
     });
 
-    it('should keep namespaced label for this.$store.commit in module file', async () => {
+    it('should show all modules mutations for this.$store.commit in module file', async () => {
         const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
         const text = `this.$store.commit('`;
         const document = {
@@ -316,11 +316,13 @@ describe('VuexCompletionItemProvider', () => {
         const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
         const items = getItems(result);
         assert.ok(items && items.length > 0);
-        const storeItem = items.find((i: any) => i.label === 'user/SET_NAME');
-        assert.ok(storeItem, 'this.$store.commit should keep namespaced mutation label');
+        const userItem = items.find((i: any) => i.label === 'user/SET_NAME');
+        assert.ok(userItem, 'this.$store.commit should show current module mutation');
+        const othersItem = items.find((i: any) => i.label === 'others/SET_NAME');
+        assert.ok(othersItem, 'this.$store.commit should also show other module mutation');
     });
 
-    it('should keep namespaced label for this.$store optional chain commit in module file', async () => {
+    it('should show all modules mutations for this.$store optional chain commit in module file', async () => {
         const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
         const text = `this.$store?.commit('`;
         const document = {
@@ -334,11 +336,13 @@ describe('VuexCompletionItemProvider', () => {
         const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
         const items = getItems(result);
         assert.ok(items && items.length > 0);
-        const storeItem = items.find((i: any) => i.label === 'user/SET_NAME');
-        assert.ok(storeItem, 'this.$store?.commit should keep namespaced mutation label');
+        const userItem = items.find((i: any) => i.label === 'user/SET_NAME');
+        assert.ok(userItem, 'this.$store?.commit should show current module mutation');
+        const othersItem = items.find((i: any) => i.label === 'others/SET_NAME');
+        assert.ok(othersItem, 'this.$store?.commit should also show other module mutation');
     });
 
-    it('should keep namespaced label for this alias optional chain dispatch in module file', async () => {
+    it('should show all modules actions for this alias optional chain dispatch in module file', async () => {
         const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
         const text = `const vm = this; vm.$store?.dispatch('`;
         const document = {
@@ -352,8 +356,10 @@ describe('VuexCompletionItemProvider', () => {
         const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
         const items = getItems(result);
         assert.ok(items && items.length > 0);
-        const storeItem = items.find((i: any) => i.label === 'user/fetchProfile');
-        assert.ok(storeItem, 'this alias + $store?.dispatch should keep namespaced action label');
+        const userItem = items.find((i: any) => i.label === 'user/fetchProfile');
+        assert.ok(userItem, 'this alias + $store?.dispatch should show current module action');
+        const othersItem = items.find((i: any) => i.label === 'others/fetchProfile');
+        assert.ok(othersItem, 'this alias + $store?.dispatch should also show other module action');
     });
 
     it('should include root mutation labels when commit uses { root: true } option', async () => {
@@ -989,6 +995,13 @@ describe('VuexCompletionItemProvider', () => {
 
             const isLoggedInItem = items.find((i: any) => i.label === 'isLoggedIn');
             assert.ok(isLoggedInItem, 'Should find root getter "isLoggedIn"');
+            // 根级 getter 用点号插入
+            assert.strictEqual(isLoggedInItem.insertText, '.isLoggedIn', 'Root getter should use dot insertion');
+
+            const hasRoleItem = items.find((i: any) => i.label === 'others/hasRole');
+            assert.ok(hasRoleItem, 'Should find namespaced getter "others/hasRole"');
+            // 命名空间 getter 用方括号插入
+            assert.strictEqual(hasRoleItem.insertText, "['others/hasRole']", 'Namespaced getter should use bracket insertion');
         });
     });
 
@@ -1660,6 +1673,101 @@ export default {
                 ? myIncrementItem.insertText
                 : myIncrementItem.insertText?.value;
             assert.ok(!insertText?.includes('()'), 'Should NOT auto-add parentheses');
+        });
+    });
+
+    // ==================== rootState / rootGetters 补全测试 ====================
+
+    describe('rootState / rootGetters completion', () => {
+        function createVueDocument(text: string) {
+            const lines = text.split('\n');
+            return {
+                fileName: '/mock/workspace/src/store/modules/user.js',
+                languageId: 'javascript',
+                version: 1,
+                uri: { toString: () => 'file:///mock/workspace/src/store/modules/user.js' },
+                getText: () => text,
+                offsetAt: (pos: any) => {
+                    let offset = 0;
+                    for (let i = 0; i < pos.line; i++) {
+                        offset += lines[i].length + 1;
+                    }
+                    offset += pos.character;
+                    return offset;
+                },
+                lineAt: (lineOrPos: any) => {
+                    const lineNum = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
+                    return { text: lines[lineNum], lineNumber: lineNum };
+                }
+            } as any;
+        }
+
+        it('should provide rootState completion at root level', async () => {
+            const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+            const text = `function action({ rootState }) { rootState. }`;
+            const cursor = text.indexOf('rootState.') + 'rootState.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide rootState completion items');
+
+            // 应该显示根模块 state 和子模块名
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find root state "count"');
+
+            const userModule = items.find((i: any) => i.label === 'user');
+            assert.ok(userModule, 'Should find module "user"');
+        });
+
+        it('should provide rootState nested completion', async () => {
+            const text = `function action({ rootState }) { rootState.user. }`;
+            const cursor = text.indexOf('rootState.user.') + 'rootState.user.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide nested rootState completion items');
+
+            const infoItem = items.find((i: any) => i.label === 'info');
+            assert.ok(infoItem, 'Should find user module state "info"');
+        });
+
+        it('should provide rootGetters dot completion', async () => {
+            const text = `function action({ rootGetters }) { rootGetters. }`;
+            const cursor = text.indexOf('rootGetters.') + 'rootGetters.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide rootGetters completion items');
+
+            const isLoggedInItem = items.find((i: any) => i.label === 'isLoggedIn');
+            assert.ok(isLoggedInItem, 'Should find root getter "isLoggedIn"');
+            // 根级 getter 用点号插入
+            assert.strictEqual(isLoggedInItem.insertText, '.isLoggedIn', 'Root getter should use dot insertion');
+
+            const hasRoleItem = items.find((i: any) => i.label === 'others/hasRole');
+            assert.ok(hasRoleItem, 'Should find namespaced getter "others/hasRole"');
+            // 命名空间 getter 用方括号插入
+            assert.strictEqual(hasRoleItem.insertText, "['others/hasRole']", 'Namespaced getter should use bracket insertion');
+        });
+
+        it('should provide rootGetters bracket completion', async () => {
+            const text = `function action({ rootGetters }) { rootGetters[''] }`;
+            const cursor = text.indexOf("['") + 2;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide rootGetters bracket completion items');
+
+            const isLoggedInItem = items.find((i: any) => i.label === 'isLoggedIn');
+            assert.ok(isLoggedInItem, 'Should find root getter "isLoggedIn" in bracket notation');
         });
     });
 });

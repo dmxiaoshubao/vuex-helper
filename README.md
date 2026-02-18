@@ -71,6 +71,9 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
   ```javascript
   ...mapState(['count'])
   ...mapState('user', ['name']) // Namespaced
+  ...mapState({ alias: 'count' }) // Object aliasing
+  ...mapState({ count: state => state.count }) // Arrow function
+  ...mapState({ count(state) { return state.count } }) // Regular function
   ...mapActions({ add: 'increment' }) // Object aliasing
   ...mapActions(['add/increment'])
   ```
@@ -78,12 +81,39 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  commit("increment", null, { root: true }); // Root namespace switch
   ```
 - **Component Methods**:
   ```javascript
   this.increment(); // Mapped via mapMutations
   this.appName; // Mapped via mapState
   ```
+
+## Feature Coverage
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `mapState` — array syntax | ✅ | `...mapState(['count'])` |
+| `mapState` — object string alias | ✅ | `...mapState({ alias: 'count' })` |
+| `mapState` — arrow function | ✅ | `...mapState({ c: state => state.count })` |
+| `mapState` — regular function | ✅ | `...mapState({ c(state) { return state.count } })` |
+| `mapState` — namespaced | ✅ | `...mapState('user', [...])` |
+| `mapGetters` — array / object | ✅ | |
+| `mapMutations` — array / object | ✅ | |
+| `mapActions` — array / object | ✅ | |
+| `this.$store.state/getters/commit/dispatch` | ✅ | Dot and bracket notation |
+| `createNamespacedHelpers` | ✅ | |
+| Object-style commit | ✅ | `commit({ type: 'inc' })` |
+| `state` as function | ✅ | `state: () => ({})` |
+| Nested state | ✅ | Recursive parsing |
+| Computed property keys | ✅ | `[SOME_MUTATION](state) {}` |
+| Dynamic module import/require | ✅ | ES Module & CommonJS |
+| Namespaced modules | ✅ | Including nested |
+| `this` alias completion | ✅ | `const _t = this; _t.` |
+| `{ root: true }` namespace switch | ✅ | commit/dispatch with root option |
+| State chain intermediate jump | ✅ | Click `user` in `state.user.name` |
+| Vue 2 project detection | ✅ | Silent deactivation for non-Vuex projects |
+| `rootState` / `rootGetters` | ✅ | Full support for completion, definition, and hover |
 
 ## Release Notes
 

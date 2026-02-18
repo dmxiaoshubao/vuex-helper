@@ -2,6 +2,9 @@ import * as vscode from "vscode";
 import { StoreIndexer } from "../services/StoreIndexer";
 import { VuexContextScanner } from "../services/VuexContextScanner";
 import { ComponentMapper } from "../services/ComponentMapper";
+import {
+  hasRootTrueOption,
+} from "../utils/VuexProviderUtils";
 
 export class VuexCompletionItemProvider
   implements vscode.CompletionItemProvider
@@ -48,9 +51,9 @@ export class VuexCompletionItemProvider
           : null;
       const hasExplicitNamespaceInput =
         !!commitDispatchArgMatch && commitDispatchArgMatch[1].includes("/");
-      const hasRootTrueOption =
+      const isRootTrue =
         vuexContext.method === "commit" || vuexContext.method === "dispatch"
-          ? this.hasRootTrueOption(document, position, vuexContext.method, vuexContext.calleeName)
+          ? hasRootTrueOption(document, position, vuexContext.method, vuexContext.calleeName)
           : false;
 
       let items: {
@@ -135,7 +138,8 @@ export class VuexCompletionItemProvider
         } else if (
           currentNamespace &&
           (vuexContext.type === "mutation" || vuexContext.type === "action") &&
-          !hasRootTrueOption &&
+          !vuexContext.isStoreMethod &&
+          !isRootTrue &&
           !(hasExplicitNamespaceInput && (vuexContext.method === "commit" || vuexContext.method === "dispatch"))
         ) {
           // If inside a module, scoped completion for commit/dispatch
@@ -328,7 +332,7 @@ export class VuexCompletionItemProvider
           (vuexContext.method === "commit" || vuexContext.method === "dispatch") &&
           vuexContext.argumentIndex === 0;
         const isLocalCommitDispatchArg0 =
-          isCommitDispatchArg0 && !vuexContext.isStoreMethod && !hasRootTrueOption;
+          isCommitDispatchArg0 && !vuexContext.isStoreMethod && !isRootTrue;
         // If inside a module and matches current namespace, use short name
         if (
           currentNamespace &&
@@ -523,11 +527,42 @@ export class VuexCompletionItemProvider
       const modulePath = pathParts.slice(0, -1);
       const accessToken = this.getAccessToken(prefix, currentInput.length);
 
-      const items: vscode.CompletionItem[] = [];
+      // getters 不按模块路径遍历——Vuex 中命名空间 getter 只能用方括号访问
+      if (propertyType === "getters" && modulePath.length === 0) {
+        const storeItems = storeMap.getters;
+        const suggestions = new Map<string, vscode.CompletionItem>();
+        storeItems.forEach((item: any) => {
+          const fullPath = this.getFullPath(item);
+          if (!suggestions.has(fullPath)) {
+            const ci = this.createCompletionItem(
+              fullPath,
+              vscode.CompletionItemKind.Property,
+              `[Vuex Store] getters`,
+              item.documentation,
+            );
+            const dotRange = this.createDotRange(
+              position.line, position.character, currentInput.length, accessToken,
+            );
+            ci.range = dotRange;
+            if (item.modulePath.length === 0) {
+              // 根级 getter — 点号插入
+              ci.insertText = accessToken + item.name;
+              ci.filterText = accessToken + currentInput + item.name;
+            } else {
+              // 命名空间 getter — 方括号插入，替换掉前面的点号
+              const safePath = fullPath.replace(/'/g, "\\'");
+              ci.insertText = accessToken === "?." ? `?.['${safePath}']` : `['${safePath}']`;
+              ci.filterText = accessToken + currentInput + fullPath;
+            }
+            this.boostOptionalChainPriority(ci, accessToken);
+            suggestions.set(fullPath, ci);
+          }
+        });
+        return new vscode.CompletionList(Array.from(suggestions.values()), false);
+      }
 
-      // Get the appropriate store items
-      const storeItems =
-        propertyType === "state" ? storeMap.state : storeMap.getters;
+      // Get the appropriate store items (state only — getters handled above)
+      const storeItems = storeMap.state;
 
       const suggestions = new Map<string, vscode.CompletionItem>();
 
@@ -546,9 +581,7 @@ export class VuexCompletionItemProvider
           if (!suggestions.has(label)) {
             const ci = this.createCompletionItem(
               label,
-              propertyType === "state"
-                ? vscode.CompletionItemKind.Field
-                : vscode.CompletionItemKind.Property,
+              vscode.CompletionItemKind.Field,
               `[Vuex Store] ${propertyType}`,
               item.documentation,
             );
@@ -666,6 +699,136 @@ export class VuexCompletionItemProvider
       dispatchItem.filterText = accessToken + partialInput + "dispatch";
       this.boostOptionalChainPriority(dispatchItem, accessToken);
       items.push(dispatchItem);
+
+      return new vscode.CompletionList(items, false);
+    }
+
+    // 3a. rootState.xxx completion (从根开始的 state 访问)
+    const rootStateMatch = prefix.match(/\brootState\.([a-zA-Z0-9_$\.]*)$/);
+    if (rootStateMatch) {
+      const pathInput = rootStateMatch[1] || "";
+      const pathParts = pathInput.split(".");
+      const currentInput = pathParts[pathParts.length - 1] || "";
+      const relativePath = pathParts.slice(0, -1).filter(Boolean);
+      const targetPath = [...relativePath]; // 从根开始，不加 currentNamespace
+
+      const replacementRange = this.createDotRange(
+        position.line, position.character, currentInput.length,
+      );
+      const suggestions = new Map<string, vscode.CompletionItem>();
+
+      storeMap.state.forEach((item: any) => {
+        if (item.modulePath.length < targetPath.length) return;
+        for (let i = 0; i < targetPath.length; i++) {
+          if (item.modulePath[i] !== targetPath[i]) return;
+        }
+        const remainingPath = item.modulePath.slice(targetPath.length);
+        if (remainingPath.length === 0) {
+          if (!suggestions.has(item.name)) {
+            const ci = this.createCompletionItem(item.name, vscode.CompletionItemKind.Field, "[Vuex] rootState", item.documentation);
+            ci.range = replacementRange;
+            ci.insertText = "." + item.name;
+            ci.filterText = "." + pathInput + item.name;
+            if (item.displayType) {
+              ci.detail += ` : ${item.displayType}`;
+            }
+            suggestions.set(item.name, ci);
+          }
+        } else {
+          const nextModule = remainingPath[0];
+          if (!suggestions.has(nextModule)) {
+            const ci = this.createCompletionItem(nextModule, vscode.CompletionItemKind.Module, "[Vuex] Module");
+            ci.range = replacementRange;
+            ci.insertText = "." + nextModule;
+            ci.filterText = "." + pathInput + nextModule;
+            suggestions.set(nextModule, ci);
+          }
+        }
+      });
+      return new vscode.CompletionList(Array.from(suggestions.values()), false);
+    }
+
+    // 3b. rootGetters.xxx completion (点号形式，根级 getter 用点号，命名空间 getter 用方括号)
+    const rootGettersDotMatch = prefix.match(/\brootGetters\.([a-zA-Z0-9_$]*)$/);
+    if (rootGettersDotMatch) {
+      const currentInput = rootGettersDotMatch[1] || "";
+      const accessToken = this.getAccessToken(prefix, currentInput.length);
+      const replacementRange = this.createDotRange(
+        position.line, position.character, currentInput.length, accessToken,
+      );
+      const suggestions = new Map<string, vscode.CompletionItem>();
+      storeMap.getters.forEach((item: any) => {
+        const fullPath = this.getFullPath(item);
+        if (!suggestions.has(fullPath)) {
+          const ci = this.createCompletionItem(fullPath, vscode.CompletionItemKind.Property, "[Vuex] rootGetters", item.documentation);
+          ci.range = replacementRange;
+          if (item.modulePath.length === 0) {
+            // 根级 getter — 点号插入
+            ci.insertText = accessToken + item.name;
+            ci.filterText = accessToken + currentInput + item.name;
+          } else {
+            // 命名空间 getter — 方括号插入
+            const safePath = fullPath.replace(/'/g, "\\'");
+            ci.insertText = accessToken === "?." ? `?.['${safePath}']` : `['${safePath}']`;
+            ci.filterText = accessToken + currentInput + fullPath;
+          }
+          this.boostOptionalChainPriority(ci, accessToken);
+          suggestions.set(fullPath, ci);
+        }
+      });
+      return new vscode.CompletionList(Array.from(suggestions.values()), false);
+    }
+
+    // 3c. rootGetters['xxx'] bracket notation
+    const rootGettersBracketMatch = normalizedPrefix.match(/\brootGetters\[['"]([^'"]*)$/);
+    if (rootGettersBracketMatch) {
+      const partialInput = rootGettersBracketMatch[1];
+      const items: vscode.CompletionItem[] = [];
+
+      storeMap.getters.forEach((item: any) => {
+        const fullPath = this.getFullPath(item);
+        const trimmedInput = partialInput.trim();
+        if (partialInput !== trimmedInput && trimmedInput !== fullPath) {
+          return;
+        }
+
+        const completionItem = this.createCompletionItem(
+          fullPath,
+          vscode.CompletionItemKind.Property,
+          "[Vuex] rootGetters",
+          item.documentation,
+        );
+
+        const bracketIndex = prefix.lastIndexOf("[");
+        const quoteChar = prefix.charAt(bracketIndex + 1);
+        const quoteIndex = bracketIndex + 2;
+
+        const lineTextAfterCursor = lineText.substring(position.character);
+        const closingBracket = `${quoteChar}]`;
+        const { spacesCount, hasClosing: hasClosingBracket, closingIndex } =
+          this.scanRightSide(lineTextAfterCursor, closingBracket);
+
+        if (hasClosingBracket) {
+          const rightExtension = closingIndex + closingBracket.length;
+          const bracketRange = new vscode.Range(
+            position.line, quoteIndex,
+            position.line, position.character + rightExtension,
+          );
+          completionItem.range = bracketRange;
+          completionItem.insertText = `${fullPath}${closingBracket}`;
+        } else {
+          const rightExtension = spacesCount;
+          const bracketRange = new vscode.Range(
+            position.line, quoteIndex,
+            position.line, position.character + rightExtension,
+          );
+          completionItem.range = bracketRange;
+          completionItem.insertText = `${fullPath}${closingBracket}`;
+        }
+
+        completionItem.filterText = partialInput.trim() === fullPath ? partialInput : fullPath;
+        items.push(completionItem);
+      });
 
       return new vscode.CompletionList(items, false);
     }
@@ -945,69 +1108,6 @@ export class VuexCompletionItemProvider
     return item.modulePath.length > 0
       ? `${item.modulePath.join("/")}/${item.name}`
       : item.name;
-  }
-
-  private hasRootTrueOption(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    method: "commit" | "dispatch",
-    calleeName?: string,
-  ): boolean {
-    const source = document.getText();
-    const offset = document.offsetAt(position);
-    const start = Math.max(0, offset - 2000);
-    const end = Math.min(source.length, offset + 2000);
-    const windowText = source.substring(start, end);
-    const callName = (calleeName || method).trim();
-    const escapedCallName = callName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedMethod = method.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    const literalPattern = new RegExp(
-      `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`,
-    );
-    if (literalPattern.test(windowText)) {
-      return true;
-    }
-
-    const thirdArgIdentifierPattern = new RegExp(
-      `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1300}?,[\\s\\S]{0,500}?,\\s*([A-Za-z_$][\\w$]*)\\s*\\)`,
-      "g",
-    );
-    const identifiers = new Set<string>();
-    let match: RegExpExecArray | null;
-    while ((match = thirdArgIdentifierPattern.exec(windowText)) !== null) {
-      if (match[1]) identifiers.add(match[1]);
-    }
-    if (identifiers.size === 0) return false;
-
-    for (const id of identifiers) {
-      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const declPattern = new RegExp(
-        `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`,
-      );
-      if (declPattern.test(windowText)) {
-        return true;
-      }
-      const assignPattern = new RegExp(
-        `\\b${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`,
-      );
-      if (assignPattern.test(windowText)) {
-        return true;
-      }
-      // allow helper call result like buildOpts({ root: true }) assigned to opts
-      const methodLikePattern = new RegExp(
-        `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*[A-Za-z_$][\\w$]*\\([\\s\\S]{0,300}?\\broot\\s*:\\s*true\\b`,
-      );
-      if (methodLikePattern.test(windowText)) {
-        return true;
-      }
-    }
-
-    // conservative fallback for alias confusion: if direct method call exists with literal root:true
-    const fallbackPattern = new RegExp(
-      `${escapedMethod}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`,
-    );
-    return fallbackPattern.test(windowText);
   }
 
   private findStoreItem(

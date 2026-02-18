@@ -2,6 +2,14 @@ import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
+import {
+    extractStateAccessPath,
+    extractRootAccessPath,
+    extractBracketPath,
+    buildLookupCandidates,
+    hasRootTrueOption,
+    VuexItemType,
+} from '../utils/VuexProviderUtils';
 
 export class VuexDefinitionProvider implements vscode.DefinitionProvider {
     private scanner: VuexContextScanner;
@@ -37,13 +45,60 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
              return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
 
+        // 功能 3：检查是否是 state 链式访问的中间路径词（如 state.common.merchant 中的 common）
+        if (!mappedItem) {
+            for (const key in mapping) {
+                const info = mapping[key];
+                if (info.type === 'state' && info.originalName.includes('.')) {
+                    const parts = info.originalName.split('.');
+                    const wordIndex = parts.indexOf(word);
+                    if (wordIndex >= 0 && wordIndex < parts.length - 1) {
+                        // word 是中间路径段，跳转到对应的 module 定义
+                        const modulePath = parts.slice(0, wordIndex + 1).join('/');
+                        const fullNamespace = info.namespace
+                            ? `${info.namespace}/${modulePath}`
+                            : modulePath;
+                        return this.findModuleDefinition(fullNamespace);
+                    }
+                }
+            }
+        }
+
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
 
         // 2. Local State Definition (state.xxx)
         // Check if preceding text ends with "state."
         const rawPrefix = lineText.substring(0, range.start.character);
-        const stateAccessPath = this.extractStateAccessPath(rawPrefix, word);
-        
+        const stateAccessPath = extractStateAccessPath(rawPrefix, word);
+
+        // 2a. rootState.xxx — 从根开始查找 state
+        const rootStateAccessPath = extractRootAccessPath(rawPrefix, word, 'rootState');
+        if (rootStateAccessPath) {
+            // 检查 word 右侧是否有后续 ".xxx"，如果有则当前词是中间路径词
+            const rawSuffix = lineText.substring(range.end.character);
+            const suffixMatch = rawSuffix.match(/^\.([A-Za-z0-9_$\.]+)/);
+            if (suffixMatch) {
+                // word 是中间路径词，跳转到对应的 module 定义
+                const nsSegments = rootStateAccessPath.replace(/\./g, '/');
+                const moduleDef = this.findModuleDefinition(nsSegments);
+                if (moduleDef) return moduleDef;
+            }
+            return this.findDefinition(rootStateAccessPath, 'state');
+        }
+
+        // 2b. rootGetters.xxx — 用 extractRootAccessPath 统一处理
+        const rootGettersAccessPath = extractRootAccessPath(rawPrefix, word, 'rootGetters');
+        if (rootGettersAccessPath) {
+            return this.findDefinition(rootGettersAccessPath, 'getter');
+        }
+
+        // 2c. rootGetters['xxx'] — 方括号语法访问命名空间 getter
+        const rootGettersBracketPath = extractBracketPath(rawPrefix, 'rootGetters');
+        if (rootGettersBracketPath) {
+            const fullPath = rootGettersBracketPath + word;
+            return this.findDefinition(fullPath, 'getter');
+        }
+
         if (currentNamespace && /\bstate\.$/.test(rawPrefix)) {
              return this.findDefinition(word, 'state', currentNamespace.join('/'));
         }
@@ -56,10 +111,25 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                 (context.method === 'commit' || context.method === 'dispatch') &&
                 (
                     context.isStoreMethod === true ||
-                    this.hasRootTrueOption(document, position, context.method, context.calleeName)
+                    hasRootTrueOption(document, position, context.method, context.calleeName)
                 )
             );
             if (context.type === 'state' && stateAccessPath) {
+                // 功能 3 补充：在 state 上下文中检查中间路径词的 module 跳转
+                // 例如 state.user.name 中点击 user，stateAccessPath = "user"
+                // 需要检查 word 右侧是否还有 ".xxx" 后续路径
+                const rawSuffix = lineText.substring(range.end.character);
+                const suffixMatch = rawSuffix.match(/^\.([A-Za-z0-9_$\.]+)/);
+                if (suffixMatch) {
+                    // word 右侧还有后续路径（如 ".name"），说明 word 是中间路径词
+                    const nsFromPath = stateAccessPath; // stateAccessPath 已经包含了 word 及其左侧路径
+                    const nsSegments = nsFromPath.replace(/\./g, '/');
+                    const fullNs = context.namespace
+                        ? `${context.namespace}/${nsSegments}`
+                        : nsSegments;
+                    const moduleDef = this.findModuleDefinition(fullNs);
+                    if (moduleDef) return moduleDef;
+                }
                 return this.findDefinition(stateAccessPath, 'state', context.namespace, currentNamespace, preferLocalFromContext);
             }
             const explicitPath = this.extractStringLiteralPathAtPosition(document, position);
@@ -77,13 +147,6 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         return undefined;
     }
 
-    private extractStateAccessPath(rawPrefix: string, word: string): string | undefined {
-        const match = rawPrefix.match(/\bstate\.([A-Za-z0-9_$\.]*)$/);
-        if (!match) return undefined;
-        const left = match[1] || '';
-        if (!left) return word;
-        return `${left}${word}`;
-    }
 
     private extractStringLiteralPathAtPosition(
         document: vscode.TextDocument,
@@ -118,59 +181,6 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         return lineText.substring(start + 1, end).trim();
     }
 
-    private hasRootTrueOption(
-        document: vscode.TextDocument,
-        position: vscode.Position,
-        method: 'commit' | 'dispatch',
-        calleeName?: string
-    ): boolean {
-        const source = document.getText();
-        const offset = document.offsetAt(position);
-        const start = Math.max(0, offset - 2000);
-        const end = Math.min(source.length, offset + 2000);
-        const windowText = source.substring(start, end);
-        const callName = (calleeName || method).trim();
-        const escapedCallName = callName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const escapedMethod = method.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        const literalPattern = new RegExp(
-            `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`
-        );
-        if (literalPattern.test(windowText)) {
-            return true;
-        }
-
-        const thirdArgIdentifierPattern = new RegExp(
-            `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1300}?,[\\s\\S]{0,500}?,\\s*([A-Za-z_$][\\w$]*)\\s*\\)`,
-            'g'
-        );
-        const identifiers = new Set<string>();
-        let match: RegExpExecArray | null;
-        while ((match = thirdArgIdentifierPattern.exec(windowText)) !== null) {
-            if (match[1]) identifiers.add(match[1]);
-        }
-        for (const id of identifiers) {
-            const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const declPattern = new RegExp(
-                `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`
-            );
-            if (declPattern.test(windowText)) return true;
-            const assignPattern = new RegExp(
-                `\\b${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`
-            );
-            if (assignPattern.test(windowText)) return true;
-            const methodLikePattern = new RegExp(
-                `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*[A-Za-z_$][\\w$]*\\([\\s\\S]{0,300}?\\broot\\s*:\\s*true\\b`
-            );
-            if (methodLikePattern.test(windowText)) return true;
-        }
-
-        const fallbackPattern = new RegExp(
-            `${escapedMethod}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`
-        );
-        return fallbackPattern.test(windowText);
-    }
-
     private findDefinition(
         name: string,
         type: 'state' | 'getter' | 'mutation' | 'action',
@@ -181,7 +191,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const storeMap = this.storeIndexer.getStoreMap();
         if (!storeMap) return undefined;
 
-        const lookups = this.buildLookupCandidates(name, type, namespace, currentNamespace);
+        const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
         for (const lookup of lookups) {
             const lookupName = lookup.name;
             const lookupNamespace = lookup.namespace;
@@ -208,6 +218,19 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
             let found: { defLocation: vscode.Location } | undefined;
 
+            // 功能 2：root:true 场景优先匹配根模块
+            if (!preferLocal && !lookupNamespace && !lookupName.includes('/')) {
+                const checkRoot = (item: { name: string, modulePath: string[] }) =>
+                    item.name === lookupName && item.modulePath.length === 0;
+
+                if (type === 'action') found = storeMap.actions.find(checkRoot);
+                else if (type === 'mutation') found = storeMap.mutations.find(checkRoot);
+                else if (type === 'getter') found = storeMap.getters.find(checkRoot);
+                else if (type === 'state') found = storeMap.state.find(checkRoot);
+
+                if (found) return found.defLocation;
+            }
+
             if (preferLocal && !lookupNamespace && currentNamespace && !lookupName.includes('/')) {
                 const checkLocal = (item: { name: string, modulePath: string[] }) =>
                     item.name === lookupName && item.modulePath.join('/') === currentNamespace.join('/');
@@ -231,48 +254,27 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         return undefined;
     }
 
-    private buildLookupCandidates(
-        name: string,
-        type: 'state' | 'getter' | 'mutation' | 'action',
-        namespace?: string,
-        currentNamespace?: string[]
-    ): Array<{ name: string; namespace?: string }> {
-        let normalizedName = name.trim();
-        let normalizedNamespace = namespace?.trim();
+    /**
+     * 查找指定命名空间对应的模块文件定义位置。
+     * 通过查找 storeMap 中属于该命名空间的任意项来定位文件。
+     */
+    private findModuleDefinition(namespace: string): vscode.Definition | undefined {
+        const storeMap = this.storeIndexer.getStoreMap();
+        if (!storeMap) return undefined;
 
-        const absorbSlashPath = () => {
-            if (!normalizedName.includes('/')) return;
-            const parts = normalizedName.split('/');
-            const last = parts.pop();
-            if (!last) return;
-            const pathNs = parts.join('/');
-            normalizedName = last;
-            normalizedNamespace = normalizedNamespace
-                ? `${normalizedNamespace}/${pathNs}`
-                : pathNs;
-        };
-
-        if (type === 'state') {
-            absorbSlashPath();
-            if (normalizedName.includes('.')) {
-                const parts = normalizedName.split('.').filter(Boolean);
-                const leaf = parts.pop();
-                if (leaf) {
-                    normalizedName = leaf;
-                    const dottedNs = parts.join('/');
-                    if (dottedNs) {
-                        normalizedNamespace = normalizedNamespace
-                            ? `${normalizedNamespace}/${dottedNs}`
-                            : currentNamespace && currentNamespace.length > 0
-                                ? `${currentNamespace.join('/')}/${dottedNs}`
-                                : dottedNs;
-                    }
-                }
-            }
-        } else if (!normalizedNamespace) {
-            absorbSlashPath();
+        const allItems = [
+            ...storeMap.state,
+            ...storeMap.getters,
+            ...storeMap.mutations,
+            ...storeMap.actions,
+        ];
+        const moduleItem = allItems.find(
+            (item) => item.modulePath.join('/') === namespace
+        );
+        if (moduleItem) {
+            const uri = moduleItem.defLocation.uri;
+            return new vscode.Location(uri, new vscode.Position(0, 0));
         }
-
-        return [{ name: normalizedName, namespace: normalizedNamespace }];
+        return undefined;
     }
 }

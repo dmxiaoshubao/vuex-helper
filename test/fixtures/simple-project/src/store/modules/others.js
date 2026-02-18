@@ -114,7 +114,14 @@ const actions = {
    * 示例：访问根状态
    */
   accessRootState({ rootState }) {
-    console.log("Root count:", rootState.count);
+    // [RS.others.1] rootState. 补全 — 应显示根 state 和子模块名
+    rootState.count; // <- 光标放点后
+
+    // [RS.others.2] rootState.user. 补全 — 应显示 user 模块 state
+    rootState.user.name; // <- 光标放最后一个点后
+
+    // [RS.others.3] rootState 中间路径词跳转 — 点击 user 应跳转到 user 模块文件
+    rootState.user.roles; // <- 光标放 user 上
   },
   /**
    * 示例：dispatch 空字符串测试

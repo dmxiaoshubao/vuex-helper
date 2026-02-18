@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { StoreIndexer } from './services/StoreIndexer';
 import { VuexDefinitionProvider } from './providers/VuexDefinitionProvider';
 import { VuexCompletionItemProvider } from './providers/VuexCompletionItemProvider';
@@ -6,12 +8,36 @@ import { VuexHoverProvider } from './providers/VuexHoverProvider';
 import { ReindexScheduler } from './services/ReindexScheduler';
 import { ComponentMapper } from './services/ComponentMapper';
 
+/**
+ * 检查项目 package.json 中是否有 vuex 依赖。
+ * 无 package.json 或解析失败时返回 true（保守策略，避免漏掉合法项目）。
+ */
+export function hasVuexDependency(workspaceRoot: string): boolean {
+    const pkgPath = path.join(workspaceRoot, 'package.json');
+    if (!fs.existsSync(pkgPath)) {
+        return true;
+    }
+    try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+        return !!allDeps['vuex'];
+    } catch {
+        return true;
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         return;
     }
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+    // 检查项目是否使用 vuex，非 vuex 项目静默退出
+    if (!hasVuexDependency(workspaceRoot)) {
+        return;
+    }
+
     const storeIndexer = new StoreIndexer(workspaceRoot);
     const sharedComponentMapper = new ComponentMapper();
     const scheduler = new ReindexScheduler(() => {

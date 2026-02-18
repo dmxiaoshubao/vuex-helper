@@ -58,10 +58,14 @@ class MockStoreIndexer extends StoreIndexer {
         const mkLoc = (file: string, line: number = 0) => new (vscode as any).Location((vscode as any).Uri.file(file), new (vscode as any).Position(line, 0));
         return {
             state: [
+                { name: 'count', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 5), displayType: 'number' },
                 { name: 'profile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10), displayType: 'Object' },
                 { name: 'name', modulePath: ['user', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 20), displayType: 'string' }
             ],
-            getters: [],
+            getters: [
+                { name: 'isAdmin', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 50) },
+                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) }
+            ],
             mutations: [],
             actions: []
         } as any;
@@ -300,5 +304,46 @@ export default {
         assert.ok(hover, 'Hover should be resolved');
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root action');
+    });
+});
+
+describe('VuexHoverProvider rootState/rootGetters', () => {
+    it('should show hover for rootState.count in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action({ rootState }) { return rootState.count }`;
+        const char = text.indexOf('rootState.count') + 'rootState.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State: count'), 'Hover should include state name');
+        assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root state file');
+    });
+
+    it('should show hover for rootState.user.profile nested access', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action({ rootState }) { return rootState.user.profile }`;
+        const char = text.indexOf('rootState.user.profile') + 'rootState.user.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State:'), 'Hover should include state label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to user module');
+    });
+
+    it('should show hover for rootGetters.isAdmin in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action({ rootGetters }) { return rootGetters.isAdmin }`;
+        const char = text.indexOf('isAdmin') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: isAdmin'), 'Hover should include getter name');
+        assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root getter file');
     });
 });

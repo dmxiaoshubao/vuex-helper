@@ -30,6 +30,7 @@
 
 <script>
 import { mapState, mapGetters, mapMutations, mapActions } from "vuex";
+import store from './store'
 
 export default {
   name: "App",

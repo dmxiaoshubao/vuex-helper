@@ -2,6 +2,13 @@ import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
+import {
+    extractStateAccessPath,
+    extractRootAccessPath,
+    extractBracketPath,
+    buildLookupCandidates,
+    hasRootTrueOption,
+} from '../utils/VuexProviderUtils';
 
 export class VuexHoverProvider implements vscode.HoverProvider {
     private contextScanner: VuexContextScanner;
@@ -43,8 +50,27 @@ export class VuexHoverProvider implements vscode.HoverProvider {
 
         // 3. Local State Hover (state.xxx)
         const rawPrefix = lineText.substring(0, range.start.character);
-        const stateAccessPath = this.extractStateAccessPath(rawPrefix, word);
-        
+        const stateAccessPath = extractStateAccessPath(rawPrefix, word);
+
+        // 3a. rootState.xxx hover — 从根开始查找 state
+        const rootStateAccessPath = extractRootAccessPath(rawPrefix, word, 'rootState');
+        if (rootStateAccessPath) {
+            return this.findHover(rootStateAccessPath, 'state');
+        }
+
+        // 3b. rootGetters.xxx hover — 用 extractRootAccessPath 统一处理
+        const rootGettersAccessPath = extractRootAccessPath(rawPrefix, word, 'rootGetters');
+        if (rootGettersAccessPath) {
+            return this.findHover(rootGettersAccessPath, 'getter');
+        }
+
+        // 3c. rootGetters['xxx'] hover — 方括号语法
+        const rootGettersBracketPath = extractBracketPath(rawPrefix, 'rootGetters');
+        if (rootGettersBracketPath) {
+            const fullPath = rootGettersBracketPath + word;
+            return this.findHover(fullPath, 'getter');
+        }
+
         if (currentNamespace && /\bstate\.$/.test(rawPrefix)) {
              return this.findHover(word, 'state', currentNamespace.join('/'));
         }
@@ -55,7 +81,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
                  (context.method === 'commit' || context.method === 'dispatch') &&
                  (
                      context.isStoreMethod === true ||
-                     this.hasRootTrueOption(document, position, context.method, context.calleeName)
+                     hasRootTrueOption(document, position, context.method, context.calleeName)
                  )
              );
              if (context.type === 'state' && stateAccessPath) {
@@ -67,66 +93,6 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         return undefined;
     }
 
-    private extractStateAccessPath(rawPrefix: string, word: string): string | undefined {
-        const match = rawPrefix.match(/\bstate\.([A-Za-z0-9_$\.]*)$/);
-        if (!match) return undefined;
-        const left = match[1] || '';
-        if (!left) return word;
-        return `${left}${word}`;
-    }
-
-    private hasRootTrueOption(
-        document: vscode.TextDocument,
-        position: vscode.Position,
-        method: 'commit' | 'dispatch',
-        calleeName?: string
-    ): boolean {
-        const source = document.getText();
-        const offset = document.offsetAt(position);
-        const start = Math.max(0, offset - 2000);
-        const end = Math.min(source.length, offset + 2000);
-        const windowText = source.substring(start, end);
-        const callName = (calleeName || method).trim();
-        const escapedCallName = callName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const escapedMethod = method.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        const literalPattern = new RegExp(
-            `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`
-        );
-        if (literalPattern.test(windowText)) {
-            return true;
-        }
-
-        const thirdArgIdentifierPattern = new RegExp(
-            `${escapedCallName}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1300}?,[\\s\\S]{0,500}?,\\s*([A-Za-z_$][\\w$]*)\\s*\\)`,
-            'g'
-        );
-        const identifiers = new Set<string>();
-        let match: RegExpExecArray | null;
-        while ((match = thirdArgIdentifierPattern.exec(windowText)) !== null) {
-            if (match[1]) identifiers.add(match[1]);
-        }
-        for (const id of identifiers) {
-            const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const declPattern = new RegExp(
-                `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`
-            );
-            if (declPattern.test(windowText)) return true;
-            const assignPattern = new RegExp(
-                `\\b${escapedId}\\s*=\\s*\\{[\\s\\S]{0,600}?\\broot\\s*:\\s*true\\b`
-            );
-            if (assignPattern.test(windowText)) return true;
-            const methodLikePattern = new RegExp(
-                `\\b(?:const|let|var)\\s+${escapedId}\\s*=\\s*[A-Za-z_$][\\w$]*\\([\\s\\S]{0,300}?\\broot\\s*:\\s*true\\b`
-            );
-            if (methodLikePattern.test(windowText)) return true;
-        }
-
-        const fallbackPattern = new RegExp(
-            `${escapedMethod}\\(\\s*['"\`][^'"\`]*['"\`][\\s\\S]{0,1800}?\\broot\\s*:\\s*true\\b`
-        );
-        return fallbackPattern.test(windowText);
-    }
 
     private findHover(
         name: string,
@@ -138,7 +104,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const storeMap = this.storeIndexer.getStoreMap();
         if (!storeMap) return undefined;
 
-        const lookups = this.buildLookupCandidates(name, type, namespace, currentNamespace);
+        const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
         let result: { defLocation: vscode.Location, documentation?: string } | undefined;
         let labelPrefix = '';
 
@@ -209,50 +175,5 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
         return undefined;
-    }
-
-    private buildLookupCandidates(
-        name: string,
-        type: 'state' | 'getter' | 'mutation' | 'action',
-        namespace?: string,
-        currentNamespace?: string[]
-    ): Array<{ name: string; namespace?: string }> {
-        let normalizedName = name.trim();
-        let normalizedNamespace = namespace?.trim();
-
-        const absorbSlashPath = () => {
-            if (!normalizedName.includes('/')) return;
-            const parts = normalizedName.split('/');
-            const last = parts.pop();
-            if (!last) return;
-            const pathNs = parts.join('/');
-            normalizedName = last;
-            normalizedNamespace = normalizedNamespace
-                ? `${normalizedNamespace}/${pathNs}`
-                : pathNs;
-        };
-
-        if (type === 'state') {
-            absorbSlashPath();
-            if (normalizedName.includes('.')) {
-                const parts = normalizedName.split('.').filter(Boolean);
-                const leaf = parts.pop();
-                if (leaf) {
-                    normalizedName = leaf;
-                    const dottedNs = parts.join('/');
-                    if (dottedNs) {
-                        normalizedNamespace = normalizedNamespace
-                            ? `${normalizedNamespace}/${dottedNs}`
-                            : currentNamespace && currentNamespace.length > 0
-                                ? `${currentNamespace.join('/')}/${dottedNs}`
-                                : dottedNs;
-                    }
-                }
-            }
-        } else if (!normalizedNamespace) {
-            absorbSlashPath();
-        }
-
-        return [{ name: normalizedName, namespace: normalizedNamespace }];
     }
 }

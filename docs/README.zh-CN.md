@@ -65,6 +65,9 @@
   ```javascript
   ...mapState(['count'])
   ...mapState('user', ['name']) // 命名空间支持
+  ...mapState({ alias: 'count' }) // 对象别名支持
+  ...mapState({ count: state => state.count }) // 箭头函数
+  ...mapState({ count(state) { return state.count } }) // 普通函数
   ...mapActions({ add: 'increment' }) // 对象别名支持
   ...mapActions(['add/increment'])
   ```
@@ -72,12 +75,39 @@
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  commit("increment", null, { root: true }); // 根命名空间切换
   ```
 - **组件方法**:
   ```javascript
   this.increment(); // 映射自 mapMutations
   this.appName; // 映射自 mapState
   ```
+
+## 功能覆盖
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| `mapState` — 数组语法 | ✅ | `...mapState(['count'])` |
+| `mapState` — 对象字符串别名 | ✅ | `...mapState({ alias: 'count' })` |
+| `mapState` — 箭头函数 | ✅ | `...mapState({ c: state => state.count })` |
+| `mapState` — 普通函数 | ✅ | `...mapState({ c(state) { return state.count } })` |
+| `mapState` — 命名空间 | ✅ | `...mapState('user', [...])` |
+| `mapGetters` — 数组 / 对象 | ✅ | |
+| `mapMutations` — 数组 / 对象 | ✅ | |
+| `mapActions` — 数组 / 对象 | ✅ | |
+| `this.$store.state/getters/commit/dispatch` | ✅ | 点号和方括号语法 |
+| `createNamespacedHelpers` | ✅ | |
+| 对象风格 commit | ✅ | `commit({ type: 'inc' })` |
+| `state` 函数形式 | ✅ | `state: () => ({})` |
+| 嵌套 state | ✅ | 递归解析 |
+| 计算属性名 | ✅ | `[SOME_MUTATION](state) {}` |
+| 动态模块 import/require | ✅ | ES Module 和 CommonJS |
+| 命名空间模块 | ✅ | 含嵌套模块 |
+| `this` 别名补全 | ✅ | `const _t = this; _t.` |
+| `{ root: true }` 命名空间切换 | ✅ | commit/dispatch 的 root 选项 |
+| State 链式路径中间词跳转 | ✅ | 点击 `state.user.name` 中的 `user` |
+| Vue 2 项目检测 | ✅ | 非 Vuex 项目静默不激活 |
+| `rootState` / `rootGetters` | ✅ | 完整支持补全、跳转和悬浮提示 |
 
 ## 使用要求
 
