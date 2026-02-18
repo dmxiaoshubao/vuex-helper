@@ -5,27 +5,54 @@ import * as json5 from 'json5';
 export class PathResolver {
     private workspaceRoot: string;
     private aliasMap: Record<string, string[]> = {};
+    private initialized = false;
+    private resolvedWorkspaceRoot = '';
+    // 路径解析缓存，key 为 `${importPath}::${dirname}`，生命周期与索引周期绑定
+    private resolveCache: Map<string, string | null> = new Map();
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
-        this.loadConfig();
     }
 
-    private loadConfig() {
+    /** 清除路径解析缓存，应在每次全量索引开始前调用 */
+    public clearCache(): void {
+        this.resolveCache.clear();
+    }
+
+    private initPromise: Promise<void> | null = null;
+
+    /** 延迟初始化：首次使用时异步加载配置并缓存 workspace realpath */
+    private ensureInitialized(): Promise<void> {
+        if (this.initialized) return Promise.resolve();
+        if (this.initPromise) return this.initPromise;
+
+        this.initPromise = (async () => {
+            await this.loadConfig();
+            try {
+                this.resolvedWorkspaceRoot = await fs.promises.realpath(this.workspaceRoot);
+            } catch {
+                this.resolvedWorkspaceRoot = path.resolve(this.workspaceRoot);
+            }
+            this.initialized = true;
+            this.initPromise = null;
+        })();
+
+        return this.initPromise;
+    }
+
+    private async loadConfig(): Promise<void> {
         const configFiles = ['tsconfig.json', 'jsconfig.json'];
         for (const file of configFiles) {
             const configPath = path.join(this.workspaceRoot, file);
-            if (fs.existsSync(configPath)) {
-                try {
-                    const content = fs.readFileSync(configPath, 'utf-8');
-                    const config = json5.parse(content);
-                    if (config.compilerOptions && config.compilerOptions.paths) {
-                        this.aliasMap = config.compilerOptions.paths;
-                        break; // Prioritize tsconfig over jsconfig
-                    }
-                } catch (error) {
-                    console.error(`Error parsing ${file}:`, error);
+            try {
+                const content = await fs.promises.readFile(configPath, 'utf-8');
+                const config = json5.parse(content);
+                if (config.compilerOptions && config.compilerOptions.paths) {
+                    this.aliasMap = config.compilerOptions.paths;
+                    break; // Prioritize tsconfig over jsconfig
                 }
+            } catch {
+                // 文件不存在或解析失败，继续尝试下一个
             }
         }
     }
@@ -35,12 +62,26 @@ export class PathResolver {
      * @param importPath e.g. "@/store", "./modules/user"
      * @param currentFilePath Absolute path of the file containing the import
      */
-    public resolve(importPath: string, currentFilePath: string): string | null {
+    public async resolve(importPath: string, currentFilePath: string): Promise<string | null> {
+        await this.ensureInitialized();
+
+        // 缓存查询
+        const cacheKey = `${importPath}::${path.dirname(currentFilePath)}`;
+        if (this.resolveCache.has(cacheKey)) {
+            return this.resolveCache.get(cacheKey)!;
+        }
+
+        const result = await this.resolveUncached(importPath, currentFilePath);
+        this.resolveCache.set(cacheKey, result);
+        return result;
+    }
+
+    private async resolveUncached(importPath: string, currentFilePath: string): Promise<string | null> {
         if (importPath.startsWith('.')) {
             // Relative path
             const dir = path.dirname(currentFilePath);
             const absolutePath = path.resolve(dir, importPath);
-            return this.ensureWorkspacePath(this.tryExtensions(absolutePath));
+            return await this.ensureWorkspacePath(await this.tryExtensions(absolutePath));
         }
 
         // Alias path
@@ -59,18 +100,19 @@ export class PathResolver {
                     const targetPrefix = p.replace('/*', '');
                     const rest = importPath.substring(aliasPrefix.length);
                     const absolutePath = path.join(this.workspaceRoot, targetPrefix, rest);
-                    const resolved = this.ensureWorkspacePath(this.tryExtensions(absolutePath));
+                    const resolved = await this.ensureWorkspacePath(await this.tryExtensions(absolutePath));
                     if (resolved) {
                         return resolved;
                     }
                 }
             }
         }
-        
+
         // Try node_modules or absolute path (less common for source files but possible)
+        // require.resolve 无 async 版本，保持同步——仅作 node_modules 兜底，极少命中
         try {
             const absolutePath = require.resolve(importPath, { paths: [path.dirname(currentFilePath)] });
-            return this.ensureWorkspacePath(absolutePath);
+            return await this.ensureWorkspacePath(absolutePath);
         } catch (e) {
             // ignore
         }
@@ -78,34 +120,43 @@ export class PathResolver {
         return null;
     }
 
-    private tryExtensions(filePath: string): string | null {
+    private async tryExtensions(filePath: string): Promise<string | null> {
         const extensions = ['.ts', '.js', '.vue', '.json', '/index.ts', '/index.js', '/index.vue'];
-        
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-            return filePath;
+
+        // 快速路径：先检查原始文件是否存在
+        try {
+            const stat = await fs.promises.stat(filePath);
+            if (stat.isFile()) return filePath;
+        } catch {
+            // 不存在，继续尝试扩展名
         }
 
-        for (const ext of extensions) {
-            const fullPath = filePath + ext;
-            if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
-                return fullPath;
-            }
+        // 并行探测所有扩展名
+        const candidates = extensions.map(ext => filePath + ext);
+        const results = await Promise.allSettled(
+            candidates.map(async (fullPath) => {
+                const stat = await fs.promises.stat(fullPath);
+                if (stat.isFile()) return fullPath;
+                throw new Error('not a file');
+            })
+        );
+
+        // 按优先级顺序返回第一个成功结果
+        for (const result of results) {
+            if (result.status === 'fulfilled') return result.value;
         }
-        return null; // Not found
+        return null;
     }
 
-    private ensureWorkspacePath(candidate: string | null): string | null {
+    private async ensureWorkspacePath(candidate: string | null): Promise<string | null> {
         if (!candidate) return null;
 
-        // 优先使用 realpathSync 解析符号链接，防止绕过工作区边界
-        let workspaceRoot: string;
+        // 使用已缓存的 resolvedWorkspaceRoot，避免重复 realpath 调用
+        const workspaceRoot = this.resolvedWorkspaceRoot;
         let resolvedPath: string;
         try {
-            workspaceRoot = fs.realpathSync(this.workspaceRoot);
-            resolvedPath = fs.realpathSync(candidate);
+            resolvedPath = await fs.promises.realpath(candidate);
         } catch {
-            // 路径不存在时 realpathSync 会抛异常，回退到 path.resolve
-            workspaceRoot = path.resolve(this.workspaceRoot);
             resolvedPath = path.resolve(candidate);
         }
 
