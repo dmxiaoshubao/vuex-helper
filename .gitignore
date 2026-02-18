@@ -5,3 +5,5 @@ node_modules
 *.vsix
 .codex/
 openspec/
+.claude/
+.agent/

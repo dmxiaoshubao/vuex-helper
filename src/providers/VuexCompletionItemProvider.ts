@@ -416,8 +416,7 @@ export class VuexCompletionItemProvider
     const prefix = lineText.substring(0, position.character);
     const normalizedPrefix = prefix.replace(/\?\./g, ".");
     const textBeforeCursor = document
-      .getText()
-      .slice(0, document.offsetAt(position));
+      .getText(new vscode.Range(new vscode.Position(0, 0), position));
     const thisLikePattern = this.buildThisLikePattern(document, textBeforeCursor);
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']

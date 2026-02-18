@@ -42,22 +42,22 @@ export class EntryAnalyzer {
             // Actually PathResolver.resolve checks for startWith('.') for relative.
             
             let resolvedPath: string | null = null;
-            
+
             // If absolute
             if (path.isAbsolute(configuredEntry)) {
-                 if (this.isAllowedStorePath(configuredEntry)) resolvedPath = configuredEntry;
+                 if (await this.isAllowedStorePath(configuredEntry)) resolvedPath = configuredEntry;
             } else {
                  // Try alias first
-                 resolvedPath = this.pathResolver.resolve(configuredEntry, path.join(this.workspaceRoot, 'package.json')); // Dummy context
-                 
+                 resolvedPath = await this.pathResolver.resolve(configuredEntry, path.join(this.workspaceRoot, 'package.json')); // Dummy context
+
                  // If not alias, try workspace relative
                  if (!resolvedPath) {
                      const abs = path.resolve(this.workspaceRoot, configuredEntry);
-                     if (this.isAllowedStorePath(abs)) resolvedPath = abs;
+                     if (await this.isAllowedStorePath(abs)) resolvedPath = abs;
                  }
             }
-            
-            if (resolvedPath && this.isAllowedStorePath(resolvedPath)) {
+
+            if (resolvedPath && await this.isAllowedStorePath(resolvedPath)) {
                 return resolvedPath;
             } else {
                 if (interactive && !this.warnedInvalidConfiguredEntry.has(configuredEntry)) {
@@ -75,7 +75,7 @@ export class EntryAnalyzer {
         
         // 2. Parse validation to find `new Vue({ store, ... })`
         for (const file of entryFiles) {
-            const storePath = this.findStoreInjection(file);
+            const storePath = await this.findStoreInjection(file);
             if (storePath) {
                 return storePath;
             }
@@ -117,16 +117,18 @@ export class EntryAnalyzer {
         return null;
     }
 
-    private isAllowedStorePath(candidate: string): boolean {
-        if (!fs.existsSync(candidate)) return false;
+    private async isAllowedStorePath(candidate: string): Promise<boolean> {
+        try {
+            const stat = await fs.promises.stat(candidate);
+            if (!stat.isFile()) return false;
+        } catch {
+            return false;
+        }
         const resolved = path.resolve(candidate);
         const workspace = path.resolve(this.workspaceRoot);
         const relative = path.relative(workspace, resolved);
         const isInsideWorkspace = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-        if (!isInsideWorkspace) return false;
-
-        const stat = fs.statSync(resolved);
-        return stat.isFile();
+        return isInsideWorkspace;
     }
 
     private async findEntryFiles(): Promise<string[]> {
@@ -134,17 +136,19 @@ export class EntryAnalyzer {
         return glob(pattern, { cwd: this.workspaceRoot, absolute: true });
     }
 
-    private findStoreInjection(filePath: string): string | null {
+    private async findStoreInjection(filePath: string): Promise<string | null> {
         try {
-            const content = fs.readFileSync(filePath, 'utf-8');
+            const content = await fs.promises.readFile(filePath, 'utf-8');
             const ast = parser.parse(content, {
                 sourceType: 'module',
-                plugins: ['typescript', 'jsx'] // Enable TS and JSX support
+                plugins: ['typescript', 'jsx']
             });
 
             const importMap: Record<string, string> = {};
             const localVars: Record<string, any> = {};
+            let foundStoreRef: any = null;
 
+            // 单次 traverse 同时收集 imports/localVars 和查找 store 注入
             traverse(ast, {
                 ImportDeclaration: (path: any) => {
                     const source = path.node.source?.value;
@@ -164,13 +168,9 @@ export class EntryAnalyzer {
                     if (path.node.id?.name) {
                         localVars[path.node.id.name] = path.node;
                     }
-                }
-            });
-
-            let foundStoreRef: any = null;
-
-            traverse(ast, {
+                },
                 NewExpression: (path: any) => {
+                    if (foundStoreRef) return;
                     const callee = path.node.callee;
                     if (!(callee.type === 'Identifier' && callee.name === 'Vue')) return;
                     const args = path.node.arguments;
@@ -183,14 +183,13 @@ export class EntryAnalyzer {
                         if (prop.type !== 'ObjectProperty') continue;
                         if (prop.key.type !== 'Identifier' || prop.key.name !== 'store') continue;
                         foundStoreRef = prop.value;
-                        path.stop();
                         break;
                     }
                 }
             });
 
             if (foundStoreRef) {
-                return this.resolveStorePathFromNode(foundStoreRef, importMap, localVars, filePath, 0, new Set());
+                return await this.resolveStorePathFromNode(foundStoreRef, importMap, localVars, filePath, 0, new Set());
             }
 
         } catch (error) {
@@ -259,14 +258,14 @@ export class EntryAnalyzer {
         return null;
     }
 
-    private resolveStorePathFromNode(
+    private async resolveStorePathFromNode(
         node: any,
         importMap: Record<string, string>,
         localVars: Record<string, any>,
         filePath: string,
         depth: number,
         seen: Set<string>
-    ): string | null {
+    ): Promise<string | null> {
         if (!node || depth > 12) return null;
 
         if (node.type === 'Identifier') {
@@ -275,7 +274,7 @@ export class EntryAnalyzer {
             seen.add(name);
 
             if (importMap[name]) {
-                return this.pathResolver.resolve(importMap[name], filePath);
+                return await this.pathResolver.resolve(importMap[name], filePath);
             }
 
             return this.resolveStorePathFromNode(localVars[name], importMap, localVars, filePath, depth + 1, seen);
@@ -284,7 +283,7 @@ export class EntryAnalyzer {
         if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require') {
             const arg0 = node.arguments?.[0];
             if (arg0 && arg0.type === 'StringLiteral') {
-                return this.pathResolver.resolve(arg0.value, filePath);
+                return await this.pathResolver.resolve(arg0.value, filePath);
             }
             return null;
         }

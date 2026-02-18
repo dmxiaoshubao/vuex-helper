@@ -22,28 +22,28 @@ describe('PathResolver Security', () => {
         return realRoot;
     }
 
-    it('should resolve alias path inside workspace', () => {
+    it('should resolve alias path inside workspace', async () => {
         const workspace = createWorkspace();
         const resolver = new PathResolver(workspace);
-        const resolved = resolver.resolve('@/store/index', path.join(workspace, 'src', 'main.js'));
+        const resolved = await resolver.resolve('@/store/index', path.join(workspace, 'src', 'main.js'));
         assert.strictEqual(resolved, path.join(workspace, 'src', 'store', 'index.js'));
     });
 
-    it('should block path traversal outside workspace', () => {
+    it('should block path traversal outside workspace', async () => {
         const workspace = createWorkspace();
         const outside = path.join(workspace, '..', 'outside.js');
         fs.writeFileSync(outside, 'export default 1');
 
         const resolver = new PathResolver(workspace);
-        const resolved = resolver.resolve('../../outside', path.join(workspace, 'src', 'main.js'));
+        const resolved = await resolver.resolve('../../outside', path.join(workspace, 'src', 'main.js'));
         assert.strictEqual(resolved, null, 'Resolver should reject paths outside workspace');
     });
 
-    it('should not match alias by loose prefix', () => {
+    it('should not match alias by loose prefix', async () => {
         const workspace = createWorkspace();
         const resolver = new PathResolver(workspace);
 
-        const resolved = resolver.resolve('@foo/store/index', path.join(workspace, 'src', 'main.js'));
+        const resolved = await resolver.resolve('@foo/store/index', path.join(workspace, 'src', 'main.js'));
         assert.strictEqual(resolved, null, 'Alias @/* should not match @foo/*');
     });
 });

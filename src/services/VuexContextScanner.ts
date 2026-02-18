@@ -32,12 +32,37 @@ export class VuexContextScanner {
     private static readonly THIS_ALIAS_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
     private static readonly DESTRUCTURE_REGEX = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
 
+    // 单条目缓存：同一位置被 completion/hover/definition 连续查询时直接返回
+    private contextCache?: { uri: string; version: number; offset: number; result: VuexContext | undefined };
+
     /**
      * Determines the Vuex context at the given position.
      * Scans backwards to find if we are inside matchers like mapState([...]), this.$store.commit(...), etc.
      */
     public getContext(document: vscode.TextDocument, position: vscode.Position): VuexContext | undefined {
         const offset = document.offsetAt(position);
+        const uri = document.uri?.toString();
+        const version = document.version;
+
+        // 缓存命中检查
+        if (uri && this.contextCache &&
+            this.contextCache.uri === uri &&
+            this.contextCache.version === version &&
+            this.contextCache.offset === offset) {
+            return this.contextCache.result;
+        }
+
+        const result = this.computeContext(document, position, offset);
+
+        // 更新缓存
+        if (uri) {
+            this.contextCache = { uri, version, offset, result };
+        }
+
+        return result;
+    }
+
+    private computeContext(document: vscode.TextDocument, position: vscode.Position, offset: number): VuexContext | undefined {
         const text = document.getText();
 
         // 对于 Vue 文件，只扫描 <script> 标签内的内容

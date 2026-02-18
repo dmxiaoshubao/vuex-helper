@@ -12,21 +12,20 @@ import { ComponentMapper } from './services/ComponentMapper';
  * 检查项目 package.json 中是否有 vuex 依赖。
  * 无 package.json 或解析失败时返回 true（保守策略，避免漏掉合法项目）。
  */
-export function hasVuexDependency(workspaceRoot: string): boolean {
+export async function hasVuexDependency(workspaceRoot: string): Promise<boolean> {
     const pkgPath = path.join(workspaceRoot, 'package.json');
-    if (!fs.existsSync(pkgPath)) {
-        return true;
-    }
     try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        const content = await fs.promises.readFile(pkgPath, 'utf-8');
+        const pkg = JSON.parse(content);
         const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
         return !!allDeps['vuex'];
     } catch {
+        // 文件不存在或解析失败，保守返回 true
         return true;
     }
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
         return;
@@ -34,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
     // 检查项目是否使用 vuex，非 vuex 项目静默退出
-    if (!hasVuexDependency(workspaceRoot)) {
+    if (!await hasVuexDependency(workspaceRoot)) {
         return;
     }
 
