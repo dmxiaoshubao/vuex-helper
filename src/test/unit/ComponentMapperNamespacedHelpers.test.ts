@@ -201,4 +201,27 @@ export default {
         assert.strictEqual(mapping.incrementAsync.type, 'action');
         assert.strictEqual(mapping.incrementAsync.originalName, 'incrementAsync');
     });
+
+    it('should merge mappings from both <script setup> and <script> tags', () => {
+        const mapper = new ComponentMapper();
+        const doc = createDocument(`<script setup>
+import { mapState } from 'vuex'
+const storeState = mapState(['count'])
+</script>
+<script>
+import { mapGetters } from 'vuex'
+export default {
+  computed: {
+    ...mapGetters(['isLoggedIn'])
+  }
+}
+</script>`);
+
+        const mapping = mapper.getMapping(doc);
+        // 两个 script 标签的内容都应被解析
+        assert.ok(mapping.count, 'count from <script setup> should exist');
+        assert.strictEqual(mapping.count.type, 'state');
+        assert.ok(mapping.isLoggedIn, 'isLoggedIn from <script> should exist');
+        assert.strictEqual(mapping.isLoggedIn.type, 'getter');
+    });
 });

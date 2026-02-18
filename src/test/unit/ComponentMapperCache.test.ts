@@ -44,4 +44,15 @@ describe('ComponentMapper Cache', () => {
         const secondMapping = mapper.getMapping(second);
         assert.ok(secondMapping.count, 'Should return cached mapping for same version');
     });
+
+    it('should clear cache after dispose', () => {
+        const mapper = new ComponentMapper();
+
+        const doc = createDocument('file:///dispose-test.vue', 1, `<script>export default {computed:{...mapState(['count'])}}</script>`);
+        mapper.getMapping(doc);
+        assert.ok(mapper.getCacheSize() > 0, 'Cache should have entries before dispose');
+
+        mapper.dispose();
+        assert.strictEqual(mapper.getCacheSize(), 0, 'Cache should be empty after dispose');
+    });
 });

@@ -1770,4 +1770,95 @@ export default {
             assert.ok(isLoggedInItem, 'Should find root getter "isLoggedIn" in bracket notation');
         });
     });
+
+    describe('script setup support', () => {
+        function createVueDocument(text: string) {
+            const lines = text.split('\n');
+            return {
+                fileName: 'test.vue',
+                languageId: 'vue',
+                version: 1,
+                uri: { toString: () => 'file:///test-setup.vue' },
+                getText: () => text,
+                offsetAt: (pos: any) => {
+                    let offset = 0;
+                    for (let i = 0; i < pos.line; i++) {
+                        offset += lines[i].length + 1;
+                    }
+                    offset += pos.character;
+                    return offset;
+                },
+                lineAt: (lineOrPos: any) => {
+                    const lineNum = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
+                    return { text: lines[lineNum], lineNumber: lineNum };
+                }
+            } as any;
+        }
+
+        it('should provide mapHelper completion inside <script> when <script setup> is also present', async () => {
+            const text = `<script setup>
+import { ref } from 'vue'
+const name = ref('')
+</script>
+<script>
+import { mapState } from 'vuex'
+export default {
+  computed: {
+    ...mapState([ ])
+  }
+}
+</script>`;
+            // 光标在 mapState([ ]) 的中括号内
+            const lines = text.split('\n');
+            let targetLine = -1;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('...mapState([ ])')) {
+                    targetLine = i;
+                    break;
+                }
+            }
+            const cursor = lines[targetLine].indexOf('[ ]') + 2;
+            const position = { line: targetLine, character: cursor } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide completion inside <script> when <script setup> exists');
+            const countItem = items.find((i: any) => i.label === 'count');
+            assert.ok(countItem, 'Should find state "count"');
+        });
+
+        it('should return undefined when cursor is inside <script setup> for mapHelper', async () => {
+            const text = `<script setup>
+import { ref } from 'vue'
+const name = ref('')
+</script>
+<script>
+import { mapState } from 'vuex'
+export default {
+  computed: {
+    ...mapState(['count'])
+  }
+}
+</script>`;
+            // 光标在 <script setup> 的 ref('') 内
+            const lines = text.split('\n');
+            let targetLine = -1;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes("ref('')")) {
+                    targetLine = i;
+                    break;
+                }
+            }
+            const cursor = lines[targetLine].indexOf("ref('')") + 5;
+            const position = { line: targetLine, character: cursor } as any;
+            const document = createVueDocument(text);
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            // <script setup> 内没有 vuex context，不应返回 mapHelper 补全
+            const hasMapHelperItem = items.some((i: any) => i.detail?.includes('[Vuex]'));
+            assert.ok(!hasMapHelperItem, 'Should NOT provide Vuex completion inside <script setup>');
+        });
+    });
 });

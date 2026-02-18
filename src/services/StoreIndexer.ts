@@ -79,6 +79,12 @@ export class StoreIndexer {
         return false;
     }
 
+    public dispose(): void {
+        this.storeMap = null;
+        this.lastStoreEntryPath = null;
+        this.indexingPromise = null;
+    }
+
     public getStoreMap(): VuexStoreMap | null {
         return this.storeMap;
     }

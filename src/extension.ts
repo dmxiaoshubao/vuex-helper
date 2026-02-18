@@ -45,6 +45,8 @@ export function activate(context: vscode.ExtensionContext) {
         void storeIndexer.index({ interactive: false });
     });
     context.subscriptions.push(scheduler);
+    context.subscriptions.push(storeIndexer);
+    context.subscriptions.push(sharedComponentMapper);
 
     // Initial indexing: allow one-time interactive guidance if store entry cannot be detected.
     void storeIndexer.index({ interactive: true });

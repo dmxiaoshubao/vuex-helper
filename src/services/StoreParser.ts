@@ -30,7 +30,13 @@ export class StoreParser {
     }
 
     private async parseModule(filePath: string, moduleNamespace: string[]): Promise<void> {
-        if (!fs.existsSync(filePath)) return;
+        const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+        try {
+            const stat = await fs.promises.stat(filePath);
+            if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return;
+        } catch {
+            return; // 文件不存在或无权限
+        }
 
         const normalizedPath = vscode.Uri.file(filePath).fsPath;
         const visitKey = `${normalizedPath}::${moduleNamespace.join('/')}`;
@@ -42,7 +48,7 @@ export class StoreParser {
         this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
 
         try {
-            const content = fs.readFileSync(filePath, 'utf-8');
+            const content = await fs.promises.readFile(filePath, 'utf-8');
             const ast = parser.parse(content, {
                 sourceType: 'module',
                 plugins: ['typescript', 'jsx']

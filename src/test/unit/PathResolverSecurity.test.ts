@@ -7,17 +7,19 @@ import { PathResolver } from '../../utils/PathResolver';
 describe('PathResolver Security', () => {
     function createWorkspace(): string {
         const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vuex-helper-pathresolver-'));
-        fs.mkdirSync(path.join(root, 'src', 'store'), { recursive: true });
-        fs.writeFileSync(path.join(root, 'src', 'store', 'index.js'), 'export default {}');
-        fs.writeFileSync(path.join(root, 'src', 'main.js'), 'import store from "./store/index"');
-        fs.writeFileSync(path.join(root, 'tsconfig.json'), JSON.stringify({
+        // macOS 上 /var 是 /private/var 的符号链接，realpathSync 确保路径一致
+        const realRoot = fs.realpathSync(root);
+        fs.mkdirSync(path.join(realRoot, 'src', 'store'), { recursive: true });
+        fs.writeFileSync(path.join(realRoot, 'src', 'store', 'index.js'), 'export default {}');
+        fs.writeFileSync(path.join(realRoot, 'src', 'main.js'), 'import store from "./store/index"');
+        fs.writeFileSync(path.join(realRoot, 'tsconfig.json'), JSON.stringify({
             compilerOptions: {
                 paths: {
                     '@/*': ['src/*']
                 }
             }
         }));
-        return root;
+        return realRoot;
     }
 
     it('should resolve alias path inside workspace', () => {

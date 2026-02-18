@@ -24,6 +24,14 @@ interface HelperContext {
 
 export class VuexContextScanner {
 
+    // 静态正则缓存：避免每次 getContext 调用时重新构造
+    private static readonly CONSTANT_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"][^'"]+['"])/g;
+    private static readonly IMPORT_REGEX = /import\s*\{([^}]+)\}\s*from\s*['"]vuex['"]/g;
+    private static readonly REQUIRE_REGEX = /\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['"]vuex['"]\s*\)/g;
+    private static readonly ALIAS_ASSIGN_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(commit|dispatch)\b/g;
+    private static readonly THIS_ALIAS_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
+    private static readonly DESTRUCTURE_REGEX = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
+
     /**
      * Determines the Vuex context at the given position.
      * Scans backwards to find if we are inside matchers like mapState([...]), this.$store.commit(...), etc.
@@ -37,17 +45,25 @@ export class VuexContextScanner {
         let scriptEnd = text.length;
 
         if (document.fileName.endsWith('.vue')) {
-            const scriptTagMatch = text.match(/<script[^>]*>/);
-            if (scriptTagMatch) {
-                scriptStart = (scriptTagMatch.index || 0) + scriptTagMatch[0].length;
-                const scriptCloseMatch = text.indexOf('</script>', scriptStart);
-                if (scriptCloseMatch !== -1) {
-                    scriptEnd = scriptCloseMatch;
+            const scriptRegex = /<script[^>]*>/g;
+            let inScript = false;
+            let hasScriptTag = false;
+            let match;
+            while ((match = scriptRegex.exec(text)) !== null) {
+                hasScriptTag = true;
+                const tagEnd = match.index + match[0].length;
+                const closeIndex = text.indexOf('</script>', tagEnd);
+                if (closeIndex === -1) continue;
+                if (offset >= tagEnd && offset <= closeIndex) {
+                    scriptStart = tagEnd;
+                    scriptEnd = closeIndex;
+                    inScript = true;
+                    break;
                 }
             }
-        }
-        if (offset < scriptStart || offset > scriptEnd) {
-            return undefined;
+            // 有 <script> 标签但光标不在任何标签内，返回 undefined
+            if (hasScriptTag && !inScript) return undefined;
+            // 没有 <script> 标签时，视整个内容为脚本（兼容测试场景）
         }
 
         // Safety check limit (look back max 2000 chars, but not before script start)
@@ -306,8 +322,8 @@ export class VuexContextScanner {
             return stringConstants[trimmed];
         };
 
-        const constantRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"][^'"]+['"])/g;
-        for (const match of snippet.matchAll(constantRegex)) {
+        VuexContextScanner.CONSTANT_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.CONSTANT_REGEX)) {
             const varName = match[1];
             const literal = match[2];
             const valueMatch = literal.match(/^['"]([^'"]+)['"]$/);
@@ -316,8 +332,8 @@ export class VuexContextScanner {
             }
         }
 
-        const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]vuex['"]/g;
-        for (const match of snippet.matchAll(importRegex)) {
+        VuexContextScanner.IMPORT_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.IMPORT_REGEX)) {
             const specList = match[1];
             if (!specList) continue;
             const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
@@ -335,8 +351,8 @@ export class VuexContextScanner {
             });
         }
 
-        const requireRegex = /\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['"]vuex['"]\s*\)/g;
-        for (const match of snippet.matchAll(requireRegex)) {
+        VuexContextScanner.REQUIRE_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.REQUIRE_REGEX)) {
             const specList = match[1];
             if (!specList) continue;
             const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);
@@ -389,8 +405,8 @@ export class VuexContextScanner {
             }
         });
 
-        const aliasAssignRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(commit|dispatch)\b/g;
-        for (const match of snippet.matchAll(aliasAssignRegex)) {
+        VuexContextScanner.ALIAS_ASSIGN_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.ALIAS_ASSIGN_REGEX)) {
             const localName = match[1];
             const sourceName = match[2] as 'commit' | 'dispatch';
             if (localName && sourceName) {
@@ -408,16 +424,16 @@ export class VuexContextScanner {
             }
         }
 
-        const thisAliasRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
-        for (const match of snippet.matchAll(thisAliasRegex)) {
+        VuexContextScanner.THIS_ALIAS_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.THIS_ALIAS_REGEX)) {
             const aliasName = match[1];
             if (aliasName) {
                 thisAliases.add(aliasName);
             }
         }
 
-        const destructureRegex = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
-        for (const match of snippet.matchAll(destructureRegex)) {
+        VuexContextScanner.DESTRUCTURE_REGEX.lastIndex = 0;
+        for (const match of snippet.matchAll(VuexContextScanner.DESTRUCTURE_REGEX)) {
             const specList = match[1];
             if (!specList) continue;
             const specs = specList.split(',').map((s) => s.trim()).filter(Boolean);

@@ -38,9 +38,14 @@ export class ComponentMapper {
         let scriptContent = text;
 
         if (document.languageId === 'vue') {
-            const scriptMatch = text.match(/<script[^>]*>([\s\S]*?)<\/script>/);
-            if (scriptMatch) {
-                scriptContent = scriptMatch[1];
+            const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/g;
+            const parts: string[] = [];
+            let match;
+            while ((match = scriptRegex.exec(text)) !== null) {
+                parts.push(match[1]);
+            }
+            if (parts.length > 0) {
+                scriptContent = parts.join('\n');
             }
         }
 
@@ -86,6 +91,7 @@ export class ComponentMapper {
             const namespacedFactoryNames = new Set<string>(['createNamespacedHelpers']);
             const localStringConstants: Record<string, string> = {};
 
+            // 合并三次 AST 遍历为一次
             traverse(ast, {
                 ImportDeclaration: (path: any) => {
                     const declaration = path.node;
@@ -108,10 +114,7 @@ export class ComponentMapper {
                             }
                         }
                     });
-                }
-            });
-
-            traverse(ast, {
+                },
                 VariableDeclarator: (path: any) => {
                     const declarator = path.node;
 
@@ -179,10 +182,7 @@ export class ComponentMapper {
                             helperFunctionInfo[localName] = { namespace, helperName: importedName as HelperName };
                         });
                     }
-                }
-            });
-
-            traverse(ast, {
+                },
                 CallExpression: (path: any) => {
                     const callee = path.node.callee;
                     let calleeName: string | undefined;
@@ -307,6 +307,10 @@ export class ComponentMapper {
             // If failed (highly unlikely with errorRecovery, but still), return cache
             return cached ? cached.mapping : {};
         }
+    }
+
+    public dispose(): void {
+        this.cache.clear();
     }
 
     public getCacheSize(): number {

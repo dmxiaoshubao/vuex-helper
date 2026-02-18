@@ -84,6 +84,25 @@ describe('StoreIndexer Concurrency', () => {
         assert.strictEqual(interactiveCalls[0], true, 'Interactive flag should be passed through');
     });
 
+    it('should clear all state after dispose', async () => {
+        const indexer = new StoreIndexer('/tmp') as any;
+
+        indexer.entryAnalyzer = {
+            analyze: async () => '/tmp/store.js'
+        };
+        indexer.storeParser = {
+            parse: async () => ({ state: [{ name: 'x', modulePath: [], defLocation: {} as any }], getters: [], mutations: [], actions: [] })
+        };
+
+        await indexer.index();
+        assert.ok(indexer.getStoreMap(), 'Should have store map before dispose');
+
+        indexer.dispose();
+        assert.strictEqual(indexer.getStoreMap(), null, 'storeMap should be null after dispose');
+        assert.strictEqual(indexer.lastStoreEntryPath, null, 'lastStoreEntryPath should be null after dispose');
+        assert.strictEqual(indexer.indexingPromise, null, 'indexingPromise should be null after dispose');
+    });
+
     it('should skip reindex for unrelated files after store is indexed', () => {
         const indexer = new StoreIndexer('/tmp') as any;
         indexer.storeMap = { state: [], getters: [], mutations: [], actions: [] };

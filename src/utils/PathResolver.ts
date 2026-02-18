@@ -97,12 +97,21 @@ export class PathResolver {
     private ensureWorkspacePath(candidate: string | null): string | null {
         if (!candidate) return null;
 
-        const workspaceRoot = path.resolve(this.workspaceRoot);
-        const resolvedPath = path.resolve(candidate);
+        // 优先使用 realpathSync 解析符号链接，防止绕过工作区边界
+        let workspaceRoot: string;
+        let resolvedPath: string;
+        try {
+            workspaceRoot = fs.realpathSync(this.workspaceRoot);
+            resolvedPath = fs.realpathSync(candidate);
+        } catch {
+            // 路径不存在时 realpathSync 会抛异常，回退到 path.resolve
+            workspaceRoot = path.resolve(this.workspaceRoot);
+            resolvedPath = path.resolve(candidate);
+        }
+
         const relative = path.relative(workspaceRoot, resolvedPath);
         const isInsideWorkspace = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 
-        // Allow workspace root files as well.
         if (relative === '' || isInsideWorkspace) {
             return resolvedPath;
         }

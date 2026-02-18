@@ -12,6 +12,7 @@ export class VuexCompletionItemProvider
   private contextScanner: VuexContextScanner;
   private componentMapper: ComponentMapper;
   private storeIndexer: StoreIndexer;
+  private thisPatternCache?: { uri: string; version: number; pattern: string };
 
   constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
     this.storeIndexer = storeIndexer;
@@ -417,7 +418,7 @@ export class VuexCompletionItemProvider
     const textBeforeCursor = document
       .getText()
       .slice(0, document.offsetAt(position));
-    const thisLikePattern = this.buildThisLikePattern(textBeforeCursor);
+    const thisLikePattern = this.buildThisLikePattern(document, textBeforeCursor);
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
     // 匹配到开始引号为止，后面的内容（包括可能的结束引号）通过 prefix 来确定
@@ -1158,12 +1159,21 @@ export class VuexCompletionItemProvider
     return undefined;
   }
 
-  private buildThisLikePattern(textBeforeCursor: string): string {
+  private buildThisLikePattern(document: vscode.TextDocument, textBeforeCursor: string): string {
+    const uri = document.uri?.toString();
+    const version = document.version;
+    if (uri && this.thisPatternCache?.uri === uri && this.thisPatternCache?.version === version) {
+      return this.thisPatternCache.pattern;
+    }
     const names = this.collectThisLikeNames(textBeforeCursor);
-    return names
+    const pattern = names
       .sort((a, b) => b.length - a.length)
       .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join("|");
+    if (uri) {
+      this.thisPatternCache = { uri, version, pattern };
+    }
+    return pattern;
   }
 
   private collectThisLikeNames(textBeforeCursor: string): string[] {
