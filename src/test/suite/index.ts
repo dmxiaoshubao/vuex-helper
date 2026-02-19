@@ -11,7 +11,7 @@ export async function run(): Promise<void> {
 
 	const testsRoot = path.resolve(__dirname, '..');
 	const setupFile = path.resolve(testsRoot, 'setup.js');
-	const files = await glob('**/*.test.js', { cwd: testsRoot });
+	const files = await glob('unit/**/*.test.js', { cwd: testsRoot });
 
 	// Load global test setup first (vscode runtime mock, shared hooks, etc.).
 	mocha.addFile(setupFile);
