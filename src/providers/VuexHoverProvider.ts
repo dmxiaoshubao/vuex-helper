@@ -6,7 +6,9 @@ import { VuexLookupService } from '../services/VuexLookupService';
 import {
     extractStateAccessPath,
     extractRootAccessPath,
-    extractBracketPath,
+    extractStringLiteralPathAtPosition,
+    detectStoreBracketAccessor,
+    extractStoreAccessPath,
     hasRootTrueOption,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
@@ -74,15 +76,32 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             return this.findHover(rootGettersAccessPath, 'getter');
         }
 
-        // 3c. rootGetters['xxx'] hover — 方括号语法
-        const rootGettersBracketPath = extractBracketPath(rawPrefix, 'rootGetters');
-        if (rootGettersBracketPath) {
-            const fullPath = rootGettersBracketPath + word;
-            return this.findHover(fullPath, 'getter');
+        // 3c. Bracket Notation hover：rootGetters['...'] / this.$store?.getters?.['...']
+        const stringLiteralObj = extractStringLiteralPathAtPosition(document, position);
+        if (stringLiteralObj) {
+            const { path: fullPath, range: literalRange } = stringLiteralObj;
+            const textBefore = lineText.substring(0, literalRange.start.character).trimEnd();
+            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace);
+            if (bracketAccessType) {
+                return this.findHover(fullPath, bracketAccessType);
+            }
         }
 
-        if (currentNamespace && /\bstate\.$/.test(rawPrefix)) {
+        if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
              return this.findHover(word, 'state', currentNamespace.join('/'));
+        }
+
+        // 3d. this.$store.state.xxx / this.$store?.getters?.xxx hover
+        const storeAccess = extractStoreAccessPath(rawPrefix, word);
+        if (storeAccess) {
+            const { type: accessType, accessPath } = storeAccess;
+            const dotIndex = accessPath.lastIndexOf('.');
+            if (dotIndex >= 0) {
+                const ns = accessPath.substring(0, dotIndex).replace(/\./g, '/');
+                const name = accessPath.substring(dotIndex + 1);
+                return this.findHover(name, accessType, ns);
+            }
+            return this.findHover(word, accessType);
         }
 
         // Re-check context with awareness of current file namespace

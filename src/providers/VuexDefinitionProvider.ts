@@ -6,7 +6,10 @@ import { VuexLookupService } from '../services/VuexLookupService';
 import {
     extractStateAccessPath,
     extractRootAccessPath,
-    extractBracketPath,
+    extractStringLiteralPathAtPosition,
+    detectStoreBracketAccessor,
+    extractStoreAccessPath,
+    hasChainedPropertySuffix,
     hasRootTrueOption,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
@@ -83,8 +86,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         if (rootStateAccessPath) {
             // 检查 word 右侧是否有后续 ".xxx"，如果有则当前词是中间路径词
             const rawSuffix = lineText.substring(range.end.character);
-            const suffixMatch = rawSuffix.match(/^\.([A-Za-z0-9_$\.]+)/);
-            if (suffixMatch) {
+            if (hasChainedPropertySuffix(rawSuffix)) {
                 // word 是中间路径词，跳转到对应的 module 定义
                 const nsSegments = rootStateAccessPath.replace(/\./g, '/');
                 const moduleDef = this.findModuleDefinition(nsSegments);
@@ -99,15 +101,54 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             return this.findDefinition(rootGettersAccessPath, 'getter');
         }
 
-        // 2c. rootGetters['xxx'] — 方括号语法访问命名空间 getter
-        const rootGettersBracketPath = extractBracketPath(rawPrefix, 'rootGetters');
-        if (rootGettersBracketPath) {
-            const fullPath = rootGettersBracketPath + word;
-            return this.findDefinition(fullPath, 'getter');
+        // 2c. Bracket Notation: rootGetters['...'] / this.$store.getters['...']
+        const stringLiteralObj = extractStringLiteralPathAtPosition(document, position);
+        if (stringLiteralObj) {
+            const { path: fullPath, range: literalRange } = stringLiteralObj;
+            const prefixEndIndex = literalRange.start.character;
+            const textBefore = lineText.substring(0, prefixEndIndex).trimEnd();
+
+            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace);
+            if (bracketAccessType) {
+                 const parts = fullPath.split('/');
+                 const nameFromPath = parts.pop()!;
+                 const namespaceFromPath = parts.join('/');
+
+                 // 检查光标是否在 namespace 段上
+                 if (word !== nameFromPath && parts.includes(word)) {
+                     const moduleDef = this.findModuleDefinition(namespaceFromPath);
+                     if (moduleDef) return moduleDef;
+                 }
+                 
+                 return this.findDefinition(fullPath, bracketAccessType);
+            }
         }
 
-        if (currentNamespace && /\bstate\.$/.test(rawPrefix)) {
+
+        if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
              return this.findDefinition(word, 'state', currentNamespace.join('/'));
+        }
+
+        // 2d. this.$store.state.xxx.yyy / this.$store?.getters.xxx — 通用链式访问（含可选链）
+        const storeAccess = extractStoreAccessPath(rawPrefix, word);
+        if (storeAccess) {
+            const { type: accessType, accessPath } = storeAccess;
+            const rawSuffix = lineText.substring(range.end.character);
+            if (hasChainedPropertySuffix(rawSuffix)) {
+                // word 是中间路径词（模块名），跳转到模块定义
+                const nsSegments = accessPath.replace(/\./g, '/');
+                const moduleDef = this.findModuleDefinition(nsSegments);
+                if (moduleDef) return moduleDef;
+            }
+            // 末端词，作为 state/getter 查找（需要解析出 namespace 和 name）
+            const dotIndex = accessPath.lastIndexOf('.');
+            if (dotIndex >= 0) {
+                const ns = accessPath.substring(0, dotIndex).replace(/\./g, '/');
+                const name = accessPath.substring(dotIndex + 1);
+                return this.findDefinition(name, accessType, ns);
+            }
+            // 单层访问如 $store.getters.isAdmin / $store?.getters?.isAdmin（无 namespace）
+            return this.findDefinition(word, accessType);
         }
 
         // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
@@ -127,8 +168,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                 // 例如 state.user.name 中点击 user，stateAccessPath = "user"
                 // 需要检查 word 右侧是否还有 ".xxx" 后续路径
                 const rawSuffix = lineText.substring(range.end.character);
-                const suffixMatch = rawSuffix.match(/^\.([A-Za-z0-9_$\.]+)/);
-                if (suffixMatch) {
+                if (hasChainedPropertySuffix(rawSuffix)) {
                     // word 右侧还有后续路径（如 ".name"），说明 word 是中间路径词
                     const nsFromPath = stateAccessPath; // stateAccessPath 已经包含了 word 及其左侧路径
                     const nsSegments = nsFromPath.replace(/\./g, '/');
@@ -140,7 +180,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                 }
                 return this.findDefinition(stateAccessPath, 'state', context.namespace, currentNamespace, preferLocalFromContext);
             }
-            const explicitPath = this.extractStringLiteralPathAtPosition(document, position);
+            // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
+            // Note: extractStringLiteralPathAtPosition result is reused from earlier call
+            const explicitPath = stringLiteralObj ? stringLiteralObj.path : undefined;
+            
             if (explicitPath && explicitPath.includes('/')) {
                 const parts = explicitPath.split('/');
                 const nameFromPath = parts.pop()!;
@@ -160,40 +203,6 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         return undefined;
-    }
-
-
-    private extractStringLiteralPathAtPosition(
-        document: vscode.TextDocument,
-        position: vscode.Position
-    ): string | undefined {
-        const lineText = document.lineAt(position.line).text;
-        const cursor = position.character;
-        const quoteChars = [`'`, `"`, '`'];
-
-        let start = -1;
-        let quoteChar = '';
-        for (let i = cursor; i >= 0; i--) {
-            const ch = lineText.charAt(i);
-            if (quoteChars.includes(ch)) {
-                start = i;
-                quoteChar = ch;
-                break;
-            }
-        }
-        if (start < 0 || !quoteChar) return undefined;
-
-        let end = -1;
-        for (let i = start + 1; i < lineText.length; i++) {
-            if (lineText.charAt(i) === quoteChar && lineText.charAt(i - 1) !== '\\') {
-                end = i;
-                break;
-            }
-        }
-        if (end < 0) return undefined;
-
-        if (cursor <= start || cursor > end) return undefined;
-        return lineText.substring(start + 1, end).trim();
     }
 
     private findDefinition(

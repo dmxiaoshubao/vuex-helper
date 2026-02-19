@@ -13,12 +13,14 @@ class MockStoreIndexer extends StoreIndexer {
             state: [
                 { name: 'name', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 0) },
                 { name: 'name', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 1) },
+                { name: 'language', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 3) },
                 { name: 'profile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10) },
                 { name: 'name', modulePath: ['user', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 20) }
             ],
             getters: [
                 { name: 'isAdmin', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 50) },
-                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) }
+                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) },
+                { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 41) }
             ],
             mutations: [
                 { name: 'SET_NAME', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 30) },
@@ -521,5 +523,225 @@ describe('VuexDefinitionProvider namespace segment jump', () => {
         assert.ok(definition, 'Definition should be resolved for namespace segment in mapGetters');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+});
+
+describe('VuexDefinitionProvider $store.state chain access', () => {
+    it('should jump to module file top when clicking module name in $store.state chain (fixture index.vue L6)', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<template></template>\n<script>\nexport default {\n  methods: {\n    init() {\n      this.$store.state.others.language\n    },\n  }\n}\n</script>`;
+        const line = text.split('\n')[5];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 5, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for module name in $store.state chain');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to state definition when clicking leaf state in $store.state chain', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<template></template>\n<script>\nexport default {\n  methods: {\n    init() {\n      this.$store.state.others.language\n    },\n  }\n}\n</script>`;
+        const line = text.split('\n')[5];
+        const char = line.indexOf('language') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 5, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for leaf state');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 3, 'Should jump to state definition line');
+    });
+});
+
+describe('VuexDefinitionProvider $store.getters chain access', () => {
+    it('should jump to getter definition for $store.getters.isAdmin (no namespace)', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { computed: { admin() { return this.$store.getters.isAdmin } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isAdmin') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for root getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 50);
+    });
+
+    it('should jump to module file top when clicking module name in $store.getters chain', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { computed: { active() { return this.$store.getters.user.isActive } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('.user') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for module name in $store.getters chain');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to getter definition when clicking leaf getter in $store.getters chain', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { computed: { active() { return this.$store.getters.user.isActive } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for namespaced getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40, 'Should jump to getter definition line');
+    });
+
+    it('should jump to getter definition for optional chain $store?.getters.user.isActive', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { computed: { active() { return this.$store?.getters.user.isActive } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for optional-chain namespaced getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should jump to getter definition for optional chain $store?.getters?.user?.isActive', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { computed: { active() { return this.$store?.getters?.user?.isActive } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for fully optional-chain namespaced getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+});
+
+describe('VuexDefinitionProvider Bracket Notation access', () => {
+    it('should jump to module file top when clicking module name in $store.getters["..."] (fixture index.vue L8)', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { this.$store.getters["others/hasNotifications"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for module name in bracket notation');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to getter definition when clicking getter name in $store.getters["..."]', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { this.$store.getters["user/isActive"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for getter name in bracket notation');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should jump to root getter definition in Bracket Notation rootGetters["..."]', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `const g = rootGetters['isAdmin']`;
+        const char = text.indexOf('isAdmin') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for root getter in bracket notation');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 50);
+    });
+
+    it('should NOT resolve bare getters["..."] in non-store file (prevent false positive)', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { const getters = {}; getters["user/isActive"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue'); // non-store .vue file
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Bare getters bracket access should be ignored in non-store file');
+    });
+
+    it('should resolve bare getters["..."] in store module file (argument destructuring)', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `const getters = { "user/isActive": true }; function action({ getters }) { getters["user/isActive"] }`;
+        const char = text.lastIndexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js'); // recognized as store file by MockStoreIndexer
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Bare getters bracket access should be resolved in store file');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should NOT resolve object member foo.getters["..."] in non-store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { const foo = {}; foo.getters["user/isActive"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'foo.getters bracket access should be ignored in non-store files');
+    });
+
+    it('should resolve optional-chain bracket this.$store?.getters["others/hasNotifications"]', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { this.$store?.getters["others/hasNotifications"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Optional-chain bracket access should resolve');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+    });
+
+    it('should resolve optional-chain bracket this.$store?.getters?.["others/hasNotifications"]', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { this.$store?.getters?.["others/hasNotifications"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Optional-chain bracket access with ?.[] should resolve');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+    });
+});
+
+describe('VuexDefinitionProvider optional-chain state access', () => {
+    it('should jump to state definition for optional chain $store?.state.others.language', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { return this.$store?.state.others.language } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('language') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for optional-chain state');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 3);
+    });
+
+    it('should jump to state definition for optional-chain bracket $store?.state?.["others/language"]', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { init() { return this.$store?.state?.["others/language"] } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('language') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for optional-chain bracket state');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 3);
     });
 });

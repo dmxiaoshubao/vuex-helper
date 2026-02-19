@@ -1,5 +1,7 @@
 # Performance Baseline
 
+Related default rules: `docs/quality/engineering-rules.md`
+
 ## Scope
 
 This baseline tracks performance-sensitive paths for Vuex Helper:

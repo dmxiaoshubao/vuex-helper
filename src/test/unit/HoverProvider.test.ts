@@ -12,12 +12,14 @@ class MockStoreIndexer extends StoreIndexer {
         return {
             state: [
                 { name: 'count', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 5), displayType: 'number' },
+                { name: 'language', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 6), displayType: 'string' },
                 { name: 'profile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10), displayType: 'Object' },
                 { name: 'name', modulePath: ['user', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 20), displayType: 'string' }
             ],
             getters: [
                 { name: 'isAdmin', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 50) },
-                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) }
+                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) },
+                { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 41) }
             ],
             mutations: [],
             actions: []
@@ -314,6 +316,45 @@ describe('VuexHoverProvider rootState/rootGetters', () => {
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('Getter: isAdmin'), 'Hover should include getter name');
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root getter file');
+    });
+
+    it('should show hover for optional-chain this.$store?.getters?.["others/hasNotifications"]', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `this.$store?.getters?.['others/hasNotifications']`;
+        const char = text.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for optional-chain bracket getter access');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: others/hasNotifications'), 'Hover should include full namespaced getter path');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/others.js'), 'Hover should resolve to namespaced getter file');
+    });
+
+    it('should show hover for optional-chain this.$store?.getters?.user?.isActive', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `this.$store?.getters?.user?.isActive`;
+        const char = text.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for optional-chain dot getter access');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: isActive'), 'Hover should include getter name');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to user getter file');
+    });
+
+    it('should show hover for optional-chain this.$store?.state?.["others/language"]', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `this.$store?.state?.["others/language"]`;
+        const char = text.indexOf('language') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for optional-chain bracket state access');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State: others/language'), 'Hover should include full namespaced state path');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/others.js'), 'Hover should resolve to namespaced state file');
     });
 });
 

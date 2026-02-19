@@ -9,6 +9,11 @@ export interface VuexMappedInfo {
     namespace?: string;
 }
 
+export interface StringLiteralAtPosition {
+    path: string;
+    range: vscode.Range;
+}
+
 /**
  * 三个 Provider（Completion / Definition / Hover）共用的工具函数。
  * 提取自各 Provider 中完全重复的私有方法，统一维护。
@@ -16,29 +21,110 @@ export interface VuexMappedInfo {
 
 /** 从 rawPrefix 中提取 state.xxx 访问路径 */
 export function extractStateAccessPath(rawPrefix: string, word: string): string | undefined {
-    const match = rawPrefix.match(/\bstate\.([A-Za-z0-9_$\.]*)$/);
+    const match = rawPrefix.match(/\bstate(?:\?\.|\.)([A-Za-z0-9_$\.?]*)$/);
     if (!match) return undefined;
-    const left = match[1] || '';
+    const left = (match[1] || '').replace(/\?\./g, '.').replace(/\?/g, '');
     if (!left) return word;
     return `${left}${word}`;
 }
 
 /** rootState.xxx / rootGetters.xxx 的路径提取 */
 export function extractRootAccessPath(rawPrefix: string, word: string, keyword: 'rootState' | 'rootGetters'): string | undefined {
-    const pattern = new RegExp(`\\b${keyword}\\.([A-Za-z0-9_$\\.]*)$`);
+    const pattern = new RegExp(`\\b${keyword}(?:\\?\\.|\\.)([A-Za-z0-9_$\\.?]*)$`);
     const match = rawPrefix.match(pattern);
     if (!match) return undefined;
-    const left = match[1] || '';
+    const left = (match[1] || '').replace(/\?\./g, '.').replace(/\?/g, '');
     if (!left) return word;
     return `${left}${word}`;
 }
 
 /** rootGetters['xxx'] 方括号语法路径提取 */
 export function extractBracketPath(rawPrefix: string, keyword: string): string | undefined {
-    const pattern = new RegExp(`\\b${keyword}\\[['"]([^'"]*)$`);
+    const pattern = new RegExp(`\\b${keyword}(?:\\?\\.)?\\[['"]([^'"]*)$`);
     const match = rawPrefix.match(pattern);
     if (!match) return undefined;
     return match[1] || '';
+}
+
+/** 从光标位置提取字符串字面量路径（支持 'a/b'） */
+export function extractStringLiteralPathAtPosition(
+    document: vscode.TextDocument,
+    position: vscode.Position
+): StringLiteralAtPosition | undefined {
+    const lineText = document.lineAt(position.line).text;
+    const cursor = position.character;
+    const quoteChars = [`'`, `"`, '`'];
+
+    let start = -1;
+    let quoteChar = '';
+    for (let i = cursor; i >= 0; i--) {
+        const ch = lineText.charAt(i);
+        if (quoteChars.includes(ch)) {
+            start = i;
+            quoteChar = ch;
+            break;
+        }
+    }
+    if (start < 0 || !quoteChar) return undefined;
+
+    let end = -1;
+    for (let i = start + 1; i < lineText.length; i++) {
+        if (lineText.charAt(i) === quoteChar && lineText.charAt(i - 1) !== '\\') {
+            end = i;
+            break;
+        }
+    }
+    if (end < 0) return undefined;
+
+    if (cursor <= start || cursor > end) return undefined;
+    return {
+        path: lineText.substring(start + 1, end).trim(),
+        range: new vscode.Range(position.line, start, position.line, end + 1),
+    };
+}
+
+/** 检测字符串前缀是否是 store getter/state 方括号访问 */
+export function detectStoreBracketAccessor(
+    textBefore: string,
+    currentNamespace?: string[],
+): 'getter' | 'state' | undefined {
+    const normalized = textBefore.replace(/\?\./g, '.');
+
+    if (/\brootGetters\.?\s*\[$/.test(normalized)) return 'getter';
+    if (/\brootState\.?\s*\[$/.test(normalized)) return 'state';
+
+    const storeMatch = normalized.match(/\$store\.(getters|state)\.?\s*\[$/);
+    if (storeMatch) {
+        return storeMatch[1] === 'getters' ? 'getter' : 'state';
+    }
+
+    if (currentNamespace && /(?:^|[\s,(\[{;:=])getters\.?\s*\[$/.test(normalized)) {
+        return 'getter';
+    }
+    if (currentNamespace && /(?:^|[\s,(\[{;:=])state\.?\s*\[$/.test(normalized)) {
+        return 'state';
+    }
+
+    return undefined;
+}
+
+/** 提取 this.$store.state/getters 链式访问路径（支持可选链） */
+export function extractStoreAccessPath(
+    rawPrefix: string,
+    word: string
+): { type: 'state' | 'getter'; accessPath: string } | undefined {
+    const match = rawPrefix.match(/\$store(?:\?\.|\.)((?:state|getters))(?:\?\.|\.)([A-Za-z0-9_$.?]*)$/);
+    if (!match) return undefined;
+
+    const accessType = match[1] === 'state' ? 'state' : 'getter';
+    const leftPath = (match[2] || '').replace(/\?\./g, '.').replace(/\?/g, '');
+    const accessPath = leftPath ? `${leftPath}${word}` : word;
+    return { type: accessType, accessPath };
+}
+
+/** 判断 suffix 是否表示链式属性继续（.foo 或 ?.foo） */
+export function hasChainedPropertySuffix(rawSuffix: string): boolean {
+    return /^(?:\?\.|\.)([A-Za-z0-9_$\.]+)/.test(rawSuffix);
 }
 
 /** 解析 this['a/b'] / vm['a/b'] 或 this.foo 场景下的映射项 */
