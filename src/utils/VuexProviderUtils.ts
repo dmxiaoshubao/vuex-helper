@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import { PathResolver } from './PathResolver';
 
 export type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
 export type VuexMappedItemType = 'state' | 'getter' | 'mutation' | 'action';
@@ -12,6 +14,11 @@ export interface VuexMappedInfo {
 export interface StringLiteralAtPosition {
     path: string;
     range: vscode.Range;
+}
+
+interface StoreImportCandidate {
+    localName: string;
+    source: string;
 }
 
 /**
@@ -87,6 +94,7 @@ export function extractStringLiteralPathAtPosition(
 export function detectStoreBracketAccessor(
     textBefore: string,
     currentNamespace?: string[],
+    storeLikeNames: readonly string[] = [],
 ): 'getter' | 'state' | undefined {
     const normalized = textBefore.replace(/\?\./g, '.');
 
@@ -96,6 +104,17 @@ export function detectStoreBracketAccessor(
     const storeMatch = normalized.match(/\$store\.(getters|state)\.?\s*\[$/);
     if (storeMatch) {
         return storeMatch[1] === 'getters' ? 'getter' : 'state';
+    }
+
+    for (const storeLikeName of storeLikeNames) {
+        const escaped = escapeRegex(storeLikeName);
+        const directStorePattern = new RegExp(
+            `(?:^|[^\\w$.])${escaped}\\.(getters|state)\\.?\\s*\\[$`
+        );
+        const directStoreMatch = normalized.match(directStorePattern);
+        if (directStoreMatch) {
+            return directStoreMatch[1] === 'getters' ? 'getter' : 'state';
+        }
     }
 
     if (currentNamespace && /(?:^|[\s,(\[{;:=])getters\.?\s*\[$/.test(normalized)) {
@@ -111,15 +130,114 @@ export function detectStoreBracketAccessor(
 /** 提取 this.$store.state/getters 链式访问路径（支持可选链） */
 export function extractStoreAccessPath(
     rawPrefix: string,
-    word: string
+    word: string,
+    storeLikeNames: readonly string[] = []
 ): { type: 'state' | 'getter'; accessPath: string } | undefined {
     const match = rawPrefix.match(/\$store(?:\?\.|\.)((?:state|getters))(?:\?\.|\.)([A-Za-z0-9_$.?]*)$/);
-    if (!match) return undefined;
+    if (match) {
+        const accessType = match[1] === 'state' ? 'state' : 'getter';
+        const leftPath = (match[2] || '').replace(/\?\./g, '.').replace(/\?/g, '');
+        const accessPath = leftPath ? `${leftPath}${word}` : word;
+        return { type: accessType, accessPath };
+    }
 
-    const accessType = match[1] === 'state' ? 'state' : 'getter';
-    const leftPath = (match[2] || '').replace(/\?\./g, '.').replace(/\?/g, '');
-    const accessPath = leftPath ? `${leftPath}${word}` : word;
-    return { type: accessType, accessPath };
+    for (const storeLikeName of storeLikeNames) {
+        const escaped = escapeRegex(storeLikeName);
+        const pattern = new RegExp(
+            `(?:^|[^\\w$.])${escaped}(?:\\?\\.|\\.)((?:state|getters))(?:\\?\\.|\\.)([A-Za-z0-9_$.?]*)$`
+        );
+        const directMatch = rawPrefix.match(pattern);
+        if (!directMatch) continue;
+
+        const accessType = directMatch[1] === 'state' ? 'state' : 'getter';
+        const leftPath = (directMatch[2] || '').replace(/\?\./g, '.').replace(/\?/g, '');
+        const accessPath = leftPath ? `${leftPath}${word}` : word;
+        return { type: accessType, accessPath };
+    }
+
+    return undefined;
+}
+
+/**
+ * 从文档中识别“导入的 store 实例变量名”，并通过 PathResolver + 已索引 store entry 进行校验。
+ * 例如：import store from '@/store' / const s = require('@/store').default
+ */
+export async function collectStoreLikeNames(
+    document: vscode.TextDocument,
+    pathResolver: PathResolver,
+    storeEntryPath?: string | null,
+): Promise<string[]> {
+    const sourceText = document.getText();
+    if (!sourceText) return [];
+
+    const candidates = collectStoreImportCandidates(sourceText);
+    if (candidates.length === 0) return [];
+
+    const resolvedCandidates = await Promise.all(
+        candidates.map(async (candidate) => {
+            const resolved = await pathResolver.resolve(candidate.source, document.fileName);
+            return { candidate, resolved };
+        })
+    );
+
+    const unique = new Set<string>();
+    for (const { candidate, resolved } of resolvedCandidates) {
+        if (!resolved) continue;
+        if (!isStoreImportTarget(resolved, storeEntryPath)) continue;
+        unique.add(candidate.localName);
+    }
+    return Array.from(unique);
+}
+
+function collectStoreImportCandidates(sourceText: string): StoreImportCandidate[] {
+    const candidates: StoreImportCandidate[] = [];
+    const pushMatch = (localName: string, source: string) => {
+        if (!localName || !source) return;
+        candidates.push({ localName, source });
+    };
+
+    const defaultImportRegex = /\bimport\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\})?\s*from\s*['"]([^'"]+)['"]/g;
+    for (const match of sourceText.matchAll(defaultImportRegex)) {
+        pushMatch(match[1], match[2]);
+    }
+
+    const namespaceImportRegex = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'"]+)['"]/g;
+    for (const match of sourceText.matchAll(namespaceImportRegex)) {
+        pushMatch(match[1], match[2]);
+    }
+
+    const defaultAliasImportRegex = /\bimport\s*\{\s*default\s+as\s+([A-Za-z_$][\w$]*)[^}]*\}\s*from\s*['"]([^'"]+)['"]/g;
+    for (const match of sourceText.matchAll(defaultAliasImportRegex)) {
+        pushMatch(match[1], match[2]);
+    }
+
+    const requireAssignRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)(?:\s*\.\s*default)?/g;
+    for (const match of sourceText.matchAll(requireAssignRegex)) {
+        pushMatch(match[1], match[2]);
+    }
+
+    const requireDefaultDestructureRegex = /\b(?:const|let|var)\s*\{\s*default\s*:\s*([A-Za-z_$][\w$]*)\s*\}\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    for (const match of sourceText.matchAll(requireDefaultDestructureRegex)) {
+        pushMatch(match[1], match[2]);
+    }
+
+    return candidates;
+}
+
+function isStoreImportTarget(resolvedPath: string, storeEntryPath?: string | null): boolean {
+    const normalizedResolved = path.normalize(vscode.Uri.file(resolvedPath).fsPath);
+    if (storeEntryPath) {
+        const normalizedEntry = path.normalize(vscode.Uri.file(storeEntryPath).fsPath);
+        if (normalizedResolved === normalizedEntry) {
+            return true;
+        }
+    }
+
+    return /(^|[\\/])store([\\/](index\.(js|ts|mjs|cjs|vue)))?$/.test(normalizedResolved);
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** 判断 suffix 是否表示链式属性继续（.foo 或 ?.foo） */

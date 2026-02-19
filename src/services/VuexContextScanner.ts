@@ -35,36 +35,53 @@ export class VuexContextScanner {
     private static readonly SEARCH_WINDOW_AFTER = 1200;
 
     // 单条目缓存：同一位置被 completion/hover/definition 连续查询时直接返回
-    private contextCache?: { uri: string; version: number; offset: number; result: VuexContext | undefined };
+    private contextCache?: {
+        uri: string;
+        version: number;
+        offset: number;
+        storeLikeKey: string;
+        result: VuexContext | undefined;
+    };
 
     /**
      * Determines the Vuex context at the given position.
      * Scans backwards to find if we are inside matchers like mapState([...]), this.$store.commit(...), etc.
      */
-    public getContext(document: vscode.TextDocument, position: vscode.Position): VuexContext | undefined {
+    public getContext(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        storeLikeNames: ReadonlySet<string> = new Set(),
+    ): VuexContext | undefined {
         const offset = document.offsetAt(position);
         const uri = document.uri?.toString();
         const version = document.version;
+        const storeLikeKey = Array.from(storeLikeNames).sort().join('|');
 
         // 缓存命中检查
         if (uri && this.contextCache &&
             this.contextCache.uri === uri &&
             this.contextCache.version === version &&
-            this.contextCache.offset === offset) {
+            this.contextCache.offset === offset &&
+            this.contextCache.storeLikeKey === storeLikeKey) {
             return this.contextCache.result;
         }
 
-        const result = this.computeContext(document, position, offset);
+        const result = this.computeContext(document, position, offset, storeLikeNames);
 
         // 更新缓存
         if (uri) {
-            this.contextCache = { uri, version, offset, result };
+            this.contextCache = { uri, version, offset, storeLikeKey, result };
         }
 
         return result;
     }
 
-    private computeContext(document: vscode.TextDocument, position: vscode.Position, offset: number): VuexContext | undefined {
+    private computeContext(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        offset: number,
+        storeLikeNames: ReadonlySet<string>,
+    ): VuexContext | undefined {
         const window = this.getScanWindow(document, position, offset);
         if (!window) return undefined;
 
@@ -84,7 +101,7 @@ export class VuexContextScanner {
         const tokens = this.tokenize(snippet);
 
         // Parse stack to find enclosing function call and extracted args
-        const result = this.analyzeTokens(tokens, helperContext);
+        const result = this.analyzeTokens(tokens, helperContext, storeLikeNames);
 
         return result;
     }
@@ -197,7 +214,11 @@ export class VuexContextScanner {
         return tokens;
     }
 
-    private analyzeTokens(tokens: { type: string, value: string }[], helperContext: HelperContext): VuexContext | undefined {
+    private analyzeTokens(
+        tokens: { type: string, value: string }[],
+        helperContext: HelperContext,
+        storeLikeNames: ReadonlySet<string>,
+    ): VuexContext | undefined {
         // Stack to track brackets/parentheses and what precedes them
         // We also want to track arguments 'accumulated' inside the current parentheses scope
         const outputStack: {
@@ -356,9 +377,12 @@ export class VuexContextScanner {
                      if (effectiveMethod === 'commit') type = 'mutation';
                      if (effectiveMethod === 'dispatch') type = 'action';
                     const parentObject = frame.precedingParentObject;
-                    const isStoreMethod =
+                    const isThisStoreMethod =
                         frame.precedingObject === '$store' &&
                         (parentObject === 'this' || helperContext.thisAliases.has(parentObject));
+                    const isImportedStoreMethod =
+                        !!frame.precedingObject && storeLikeNames.has(frame.precedingObject);
+                    const isStoreMethod = isThisStoreMethod || isImportedStoreMethod;
                     return {
                          type,
                          method: effectiveMethod as any,

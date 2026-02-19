@@ -156,6 +156,14 @@ export class StoreIndexer {
         return this.storeMap;
     }
 
+    public getWorkspaceRoot(): string {
+        return this.workspaceRoot;
+    }
+
+    public getStoreEntryPath(): string | null {
+        return this.lastStoreEntryPath;
+    }
+
     private clearIndexes(): void {
         this.itemIndexByTypeNsName.clear();
         this.itemIndexByTypeFullPath.clear();

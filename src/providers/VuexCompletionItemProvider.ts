@@ -3,7 +3,9 @@ import { StoreIndexer, VuexAnyItem } from "../services/StoreIndexer";
 import { VuexContextScanner } from "../services/VuexContextScanner";
 import { ComponentMapper } from "../services/ComponentMapper";
 import { VuexStoreMap } from "../types";
+import { PathResolver } from "../utils/PathResolver";
 import {
+  collectStoreLikeNames,
   hasRootTrueOption,
 } from "../utils/VuexProviderUtils";
 
@@ -14,11 +16,14 @@ export class VuexCompletionItemProvider
   private componentMapper: ComponentMapper;
   private storeIndexer: StoreIndexer;
   private thisPatternCache?: { uri: string; version: number; pattern: string };
+  private pathResolver: PathResolver;
+  private storeLikeNamesCache?: { uri: string; version: number; names: string[] };
 
   constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
     this.storeIndexer = storeIndexer;
     this.contextScanner = new VuexContextScanner();
     this.componentMapper = componentMapper ?? new ComponentMapper();
+    this.pathResolver = new PathResolver(storeIndexer.getWorkspaceRoot());
   }
 
   public async provideCompletionItems(
@@ -34,9 +39,11 @@ export class VuexCompletionItemProvider
     }
 
     const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+    const storeLikeNames = await this.getStoreLikeNames(document);
+    const storeLikeNameSet = new Set(storeLikeNames);
 
     // 1. Vuex Context (String literals) - existing logic
-    const vuexContext = this.contextScanner.getContext(document, position);
+    const vuexContext = this.contextScanner.getContext(document, position, storeLikeNameSet);
 
     if (vuexContext && vuexContext.type !== "unknown") {
       if (token.isCancellationRequested) return undefined;
@@ -409,12 +416,16 @@ export class VuexCompletionItemProvider
         )
       : document.getText(new vscode.Range(new vscode.Position(0, 0), position));
     const thisLikePattern = this.buildThisLikePattern(document, textBeforeCursor);
+    const storeObjectPattern = this.buildStoreObjectPattern(
+      thisLikePattern,
+      storeLikeNames,
+    );
 
     // 2a. Match bracket notation: this.$store.state['xxx'] or this.$store.getters['xxx']
     // 匹配到开始引号为止，后面的内容（包括可能的结束引号）通过 prefix 来确定
     const storeBracketMatch = normalizedPrefix.match(
       new RegExp(
-        `(?:${thisLikePattern})\\.\\$store\\.(state|getters)\\[['"]([^'"]*)`,
+        `${storeObjectPattern}\\.(state|getters)\\[['"]([^'"]*)`,
       ),
     );
 
@@ -502,7 +513,7 @@ export class VuexCompletionItemProvider
     // 2b. Match this.$store.state.xxx or this.$store.getters.xxx (支持多级访问)
     const storePropertyMatch = normalizedPrefix.match(
       new RegExp(
-        `(?:${thisLikePattern})\\.\\$store\\.(state|getters)\\.([\\w\\.\\/]*)$`,
+        `${storeObjectPattern}\\.(state|getters)\\.([\\w\\.\\/]*)$`,
       ),
     );
 
@@ -621,7 +632,7 @@ export class VuexCompletionItemProvider
 
     // 3. this.$store. completion (state, getters, commit, dispatch)
     const storeMatch = normalizedPrefix.match(
-      new RegExp(`(?:${thisLikePattern})\\.\\$store\\.([a-zA-Z0-9_$]*)$`),
+      new RegExp(`${storeObjectPattern}\\.([a-zA-Z0-9_$]*)$`),
     );
 
     if (storeMatch) {
@@ -1194,6 +1205,49 @@ export class VuexCompletionItemProvider
       this.thisPatternCache = { uri, version, pattern };
     }
     return pattern;
+  }
+
+  private buildStoreObjectPattern(
+    thisLikePattern: string,
+    storeLikeNames: readonly string[],
+  ): string {
+    const escapedStoreNames = storeLikeNames
+      .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .sort((a, b) => b.length - a.length);
+    const thisStorePattern = thisLikePattern
+      ? `(?:${thisLikePattern})\\.\\$store`
+      : "";
+    const directStorePattern =
+      escapedStoreNames.length > 0
+        ? `(?:^|[^\\w$.])(?:${escapedStoreNames.join("|")})`
+        : "";
+
+    if (thisStorePattern && directStorePattern) {
+      return `(?:${thisStorePattern}|${directStorePattern})`;
+    }
+    return thisStorePattern || directStorePattern || "(?!)";
+  }
+
+  private async getStoreLikeNames(document: vscode.TextDocument): Promise<string[]> {
+    const uri = document.uri?.toString();
+    const version = document.version;
+    if (
+      uri &&
+      this.storeLikeNamesCache?.uri === uri &&
+      this.storeLikeNamesCache.version === version
+    ) {
+      return this.storeLikeNamesCache.names;
+    }
+
+    const names = await collectStoreLikeNames(
+      document,
+      this.pathResolver,
+      this.storeIndexer.getStoreEntryPath(),
+    );
+    if (uri) {
+      this.storeLikeNamesCache = { uri, version, names };
+    }
+    return names;
   }
 
   private collectThisLikeNames(textBeforeCursor: string): string[] {

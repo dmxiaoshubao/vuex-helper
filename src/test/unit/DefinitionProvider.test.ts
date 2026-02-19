@@ -1,40 +1,54 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { StoreIndexer } from '../../services/StoreIndexer';
 import { VuexDefinitionProvider } from '../../providers/VuexDefinitionProvider';
 const vscode = require('vscode');
 
 class MockStoreIndexer extends StoreIndexer {
-    constructor() { super('/mock/workspace'); }
+    private workspaceRootForTest: string;
+    private storeEntryPathForTest: string | null;
+    constructor(workspaceRootForTest: string = '/mock/workspace', storeEntryPathForTest: string | null = null) {
+        super(workspaceRootForTest);
+        this.workspaceRootForTest = workspaceRootForTest;
+        this.storeEntryPathForTest = storeEntryPathForTest;
+    }
 
     getStoreMap() {
         const mkLoc = (file: string, line: number = 0) => new (vscode as any).Location((vscode as any).Uri.file(file), new (vscode as any).Position(line, 0));
+        const root = this.workspaceRootForTest;
         return {
             state: [
-                { name: 'name', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 0) },
-                { name: 'name', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 1) },
-                { name: 'language', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 3) },
-                { name: 'profile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 10) },
-                { name: 'name', modulePath: ['user', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 20) }
+                { name: 'name', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 0) },
+                { name: 'name', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 1) },
+                { name: 'language', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 3) },
+                { name: 'profile', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 10) },
+                { name: 'name', modulePath: ['user', 'profile'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 20) }
             ],
             getters: [
-                { name: 'isAdmin', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 50) },
-                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js', 40) },
-                { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 41) }
+                { name: 'isAdmin', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 50) },
+                { name: 'isActive', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 40) },
+                { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 41) }
             ],
             mutations: [
-                { name: 'SET_NAME', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 30) },
-                { name: 'SET_NAME', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js') },
-                { name: 'SET_NAME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') },
-                { name: 'SET_THEME', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 8) }
+                { name: 'SET_NAME', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 30) },
+                { name: 'SET_NAME', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js')) },
+                { name: 'SET_NAME', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js')) },
+                { name: 'SET_THEME', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 8) }
             ],
             actions: [
-                { name: 'fetchProfile', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 31) },
-                { name: 'fetchProfile', modulePath: ['user'], defLocation: mkLoc('/mock/workspace/src/store/modules/user.js') },
-                { name: 'fetchProfile', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js') },
-                { name: 'changeTheme', modulePath: ['others'], defLocation: mkLoc('/mock/workspace/src/store/modules/others.js', 9) }
+                { name: 'fetchProfile', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 31) },
+                { name: 'fetchProfile', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js')) },
+                { name: 'fetchProfile', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js')) },
+                { name: 'changeTheme', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 9) }
             ]
         } as any;
+    }
+
+    getStoreEntryPath() {
+        return this.storeEntryPathForTest;
     }
 
     getNamespace(filePath: string) {
@@ -100,6 +114,29 @@ function createDocument(text: string, fileName: string) {
     } as any;
 }
 
+function createAliasWorkspace() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'vuex-helper-def-store-')));
+    fs.mkdirSync(path.join(root, 'src', 'store'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'src', 'components'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'store', 'index.js'), 'export default {}');
+    fs.writeFileSync(
+        path.join(root, 'tsconfig.json'),
+        JSON.stringify({
+            compilerOptions: {
+                paths: {
+                    '@/*': ['src/*']
+                }
+            }
+        })
+    );
+    return {
+        root,
+        storeEntry: path.join(root, 'src', 'store', 'index.js'),
+        componentFile: path.join(root, 'src', 'components', 'App.vue'),
+        moduleActionFile: path.join(root, 'src', 'store', 'modules', 'user', 'actions.js'),
+    };
+}
+
 describe('VuexDefinitionProvider namespaced', () => {
     it('should jump to the explicit namespaced mutation for commit path', async () => {
         const provider = new VuexDefinitionProvider(new MockStoreIndexer());
@@ -158,6 +195,34 @@ describe('VuexDefinitionProvider namespaced', () => {
         assert.ok(definition, 'Definition should be resolved');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 31);
+    });
+
+    it('should resolve namespaced getter definition for alias-imported store access', async () => {
+        const workspace = createAliasWorkspace();
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer(workspace.root, workspace.storeEntry));
+        const text = `import store from '@/store'\nstore.getters['others/hasNotifications']`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, workspace.componentFile);
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for imported store getter');
+        assert.strictEqual((definition as any).uri.fsPath, path.join(workspace.root, 'src/store/modules/others.js'));
+        assert.strictEqual((definition as any).rangeOrPosition.line, 41);
+    });
+
+    it('should prefer root mutation for alias-imported store.commit in module file', async () => {
+        const workspace = createAliasWorkspace();
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer(workspace.root, workspace.storeEntry));
+        const text = `import store from '@/store'\nfunction run(){ store.commit('SET_NAME') }`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, workspace.moduleActionFile);
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for imported store commit');
+        assert.strictEqual((definition as any).uri.fsPath, path.join(workspace.root, 'src/store/index.js'));
+        assert.strictEqual((definition as any).rangeOrPosition.line, 30);
     });
 
     it('should prefer root mutation when commit uses { root: true } option', async () => {

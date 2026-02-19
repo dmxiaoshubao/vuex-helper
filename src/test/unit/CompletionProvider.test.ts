@@ -1,5 +1,8 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { VuexCompletionItemProvider } from '../../providers/VuexCompletionItemProvider';
 import { StoreIndexer } from '../../services/StoreIndexer';
@@ -38,7 +41,8 @@ class MockStoreIndexer extends StoreIndexer {
 }
 
 class ScopedMockStoreIndexer extends StoreIndexer {
-    constructor() { super(''); }
+    private storeEntryPath: string | null = null;
+    constructor(workspaceRoot: string = '') { super(workspaceRoot); }
     getStoreMap() {
         return {
             state: [
@@ -57,6 +61,8 @@ class ScopedMockStoreIndexer extends StoreIndexer {
         };
     }
     getNamespace() { return ['user']; }
+    getStoreEntryPath() { return this.storeEntryPath; }
+    setStoreEntryPath(storeEntryPath: string) { this.storeEntryPath = storeEntryPath; }
 }
 
 class NamespacedStateMockStoreIndexer extends StoreIndexer {
@@ -114,6 +120,28 @@ class RootOptionMockStoreIndexer extends StoreIndexer {
 
 describe('VuexCompletionItemProvider', () => {
     let provider: VuexCompletionItemProvider;
+
+    const createAliasWorkspace = () => {
+        const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'vuex-helper-completion-store-')));
+        fs.mkdirSync(path.join(root, 'src', 'store'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'src', 'store', 'modules'), { recursive: true });
+        fs.mkdirSync(path.join(root, 'src', 'store', 'modules', 'user'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'src', 'store', 'index.js'), 'export default {}');
+        fs.writeFileSync(
+            path.join(root, 'tsconfig.json'),
+            JSON.stringify({
+                compilerOptions: {
+                    paths: {
+                        '@/*': ['src/*']
+                    }
+                }
+            })
+        );
+        return {
+            root,
+            storeEntry: path.join(root, 'src', 'store', 'index.js')
+        };
+    };
 
     beforeEach(() => {
         provider = new VuexCompletionItemProvider(new MockStoreIndexer());
@@ -310,6 +338,53 @@ describe('VuexCompletionItemProvider', () => {
         assert.ok(userItem, 'this alias + $store?.dispatch should show current module action');
         const othersItem = items.find((i: any) => i.label === 'others/fetchProfile');
         assert.ok(othersItem, 'this alias + $store?.dispatch should also show other module action');
+    });
+
+    it('should show all modules mutations for imported alias store.commit in module file', async () => {
+        const workspace = createAliasWorkspace();
+        const scopedIndexer = new ScopedMockStoreIndexer(workspace.root);
+        scopedIndexer.setStoreEntryPath(workspace.storeEntry);
+        const scopedProvider = new VuexCompletionItemProvider(scopedIndexer);
+        const text = `import store from '@/store'; store.commit('`;
+        const document = {
+            fileName: path.join(workspace.root, 'src', 'store', 'modules', 'user', 'actions.js'),
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const userItem = items.find((i: any) => i.label === 'user/SET_NAME');
+        assert.ok(userItem, 'import store commit should show current module mutation');
+        const othersItem = items.find((i: any) => i.label === 'others/SET_NAME');
+        assert.ok(othersItem, 'import store commit should also show other module mutation');
+    });
+
+    it('should provide getter completion for alias-imported store bracket access', async () => {
+        const workspace = createAliasWorkspace();
+        const indexer = new MockStoreIndexer();
+        (indexer as any).workspaceRoot = workspace.root;
+        (indexer as any).lastStoreEntryPath = workspace.storeEntry;
+        const aliasProvider = new VuexCompletionItemProvider(indexer);
+        const text = `import store from '@/store'; store.getters['`;
+        const document = {
+            fileName: path.join(workspace.root, 'src/components/App.vue'),
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text }),
+            uri: { toString: () => 'file:///tmp/app.vue' },
+            version: 1
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await aliasProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.ok(items && items.length > 0);
+        const target = items.find((i: any) => i.label === 'others/hasRole');
+        assert.ok(target, 'import store getters bracket should suggest namespaced getter');
     });
 
     it('should include root mutation labels when commit uses { root: true } option', async () => {

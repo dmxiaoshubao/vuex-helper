@@ -3,7 +3,9 @@ import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
 import { VuexLookupService } from '../services/VuexLookupService';
+import { PathResolver } from '../utils/PathResolver';
 import {
+    collectStoreLikeNames,
     extractStateAccessPath,
     extractRootAccessPath,
     extractStringLiteralPathAtPosition,
@@ -18,12 +20,15 @@ export class VuexHoverProvider implements vscode.HoverProvider {
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
     private lookupService: VuexLookupService;
+    private pathResolver: PathResolver;
+    private storeLikeNamesCache?: { uri: string; version: number; names: string[] };
 
     constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.contextScanner = new VuexContextScanner();
         this.componentMapper = componentMapper ?? new ComponentMapper();
         this.lookupService = new VuexLookupService(storeIndexer);
+        this.pathResolver = new PathResolver(storeIndexer.getWorkspaceRoot());
     }
 
     public async provideHover(
@@ -36,10 +41,12 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const range = document.getWordRangeAtPosition(position);
         if (!range) return undefined;
         const word = document.getText(range);
+        const storeLikeNames = await this.getStoreLikeNames(document);
+        const storeLikeNameSet = new Set(storeLikeNames);
         
         // 1. Vuex Context (String literals)
         // Moved logical check down to combine with context awareness
-        const context = this.contextScanner.getContext(document, position);
+        const context = this.contextScanner.getContext(document, position, storeLikeNameSet);
         if (token.isCancellationRequested) return undefined;
 
         // 2. Component Mapping (this.methodName)
@@ -81,7 +88,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         if (stringLiteralObj) {
             const { path: fullPath, range: literalRange } = stringLiteralObj;
             const textBefore = lineText.substring(0, literalRange.start.character).trimEnd();
-            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace);
+            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace, storeLikeNames);
             if (bracketAccessType) {
                 return this.findHover(fullPath, bracketAccessType);
             }
@@ -92,7 +99,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
 
         // 3d. this.$store.state.xxx / this.$store?.getters?.xxx hover
-        const storeAccess = extractStoreAccessPath(rawPrefix, word);
+        const storeAccess = extractStoreAccessPath(rawPrefix, word, storeLikeNames);
         if (storeAccess) {
             const { type: accessType, accessPath } = storeAccess;
             const dotIndex = accessPath.lastIndexOf('.');
@@ -163,5 +170,27 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             return new vscode.Hover(md);
         }
         return undefined;
+    }
+
+    private async getStoreLikeNames(document: vscode.TextDocument): Promise<string[]> {
+        const uri = document.uri?.toString();
+        const version = document.version;
+        if (
+            uri &&
+            this.storeLikeNamesCache?.uri === uri &&
+            this.storeLikeNamesCache.version === version
+        ) {
+            return this.storeLikeNamesCache.names;
+        }
+
+        const names = await collectStoreLikeNames(
+            document,
+            this.pathResolver,
+            this.storeIndexer.getStoreEntryPath()
+        );
+        if (uri) {
+            this.storeLikeNamesCache = { uri, version, names };
+        }
+        return names;
     }
 }

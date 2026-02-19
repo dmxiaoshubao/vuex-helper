@@ -3,7 +3,9 @@ import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
 import { VuexLookupService } from '../services/VuexLookupService';
+import { PathResolver } from '../utils/PathResolver';
 import {
+    collectStoreLikeNames,
     extractStateAccessPath,
     extractRootAccessPath,
     extractStringLiteralPathAtPosition,
@@ -19,12 +21,15 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
     private lookupService: VuexLookupService;
+    private pathResolver: PathResolver;
+    private storeLikeNamesCache?: { uri: string; version: number; names: string[] };
 
     constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.scanner = new VuexContextScanner();
         this.componentMapper = componentMapper ?? new ComponentMapper();
         this.lookupService = new VuexLookupService(storeIndexer);
+        this.pathResolver = new PathResolver(storeIndexer.getWorkspaceRoot());
     }
 
     public async provideDefinition(
@@ -38,6 +43,8 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         if (!range) return undefined;
 
         const word = document.getText(range);
+        const storeLikeNames = await this.getStoreLikeNames(document);
+        const storeLikeNameSet = new Set(storeLikeNames);
 
         // 1. Component Mapping (for this.methodName usage)
         const lineText = document.lineAt(position.line).text;
@@ -108,7 +115,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             const prefixEndIndex = literalRange.start.character;
             const textBefore = lineText.substring(0, prefixEndIndex).trimEnd();
 
-            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace);
+            const bracketAccessType = detectStoreBracketAccessor(textBefore, currentNamespace, storeLikeNames);
             if (bracketAccessType) {
                  const parts = fullPath.split('/');
                  const nameFromPath = parts.pop()!;
@@ -130,7 +137,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         // 2d. this.$store.state.xxx.yyy / this.$store?.getters.xxx — 通用链式访问（含可选链）
-        const storeAccess = extractStoreAccessPath(rawPrefix, word);
+        const storeAccess = extractStoreAccessPath(rawPrefix, word, storeLikeNames);
         if (storeAccess) {
             const { type: accessType, accessPath } = storeAccess;
             const rawSuffix = lineText.substring(range.end.character);
@@ -152,7 +159,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
-        const context = this.scanner.getContext(document, position);
+        const context = this.scanner.getContext(document, position, storeLikeNameSet);
         if (token.isCancellationRequested) return undefined;
         // Re-check context with awareness of current file namespace
         if (context && context.type !== 'unknown') {
@@ -231,5 +238,27 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const def = this.storeIndexer.getModuleDefinition(namespace);
         if (!def) return undefined;
         return new vscode.Location(def.uri, new vscode.Position(0, 0));
+    }
+
+    private async getStoreLikeNames(document: vscode.TextDocument): Promise<string[]> {
+        const uri = document.uri?.toString();
+        const version = document.version;
+        if (
+            uri &&
+            this.storeLikeNamesCache?.uri === uri &&
+            this.storeLikeNamesCache.version === version
+        ) {
+            return this.storeLikeNamesCache.names;
+        }
+
+        const names = await collectStoreLikeNames(
+            document,
+            this.pathResolver,
+            this.storeIndexer.getStoreEntryPath()
+        );
+        if (uri) {
+            this.storeLikeNamesCache = { uri, version, names };
+        }
+        return names;
     }
 }
