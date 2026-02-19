@@ -42,6 +42,13 @@ export class VuexHoverProvider implements vscode.HoverProvider {
 
         // 2. Component Mapping (this.methodName)
         const lineText = document.lineAt(position.line).text;
+
+        // 跳过注释行（单行注释 // 和块注释中间的 * 行）
+        const trimmedLine = lineText.trimStart();
+        if (trimmedLine.startsWith('//') || trimmedLine.startsWith('*') || trimmedLine.startsWith('/*')) {
+            return undefined;
+        }
+
         const rawPrefix = lineText.substring(0, range.start.character);
         
         const mapping = this.componentMapper.getMapping(document);

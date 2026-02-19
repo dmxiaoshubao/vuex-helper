@@ -316,3 +316,27 @@ describe('VuexHoverProvider rootState/rootGetters', () => {
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root getter file');
     });
 });
+
+describe('VuexHoverProvider comment skipping', () => {
+    it('should not provide hover when cursor is on a single-line comment', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function action({ commit }) {\n  // commit('SET_NAME')\n  commit('SET_NAME')\n}`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Hover should not be resolved inside a comment');
+    });
+
+    it('should not provide hover when cursor is on a block comment line', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function action({ commit }) {\n  /*\n   * commit('SET_NAME')\n   */\n  commit('SET_NAME')\n}`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 2, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Hover should not be resolved inside a block comment');
+    });
+});

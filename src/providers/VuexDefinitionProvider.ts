@@ -38,6 +38,13 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         // 1. Component Mapping (for this.methodName usage)
         const lineText = document.lineAt(position.line).text;
+
+        // 跳过注释行（单行注释 // 和块注释中间的 * 行）
+        const trimmedLine = lineText.trimStart();
+        if (trimmedLine.startsWith('//') || trimmedLine.startsWith('*') || trimmedLine.startsWith('/*')) {
+            return undefined;
+        }
+
         const rawPrefix = lineText.substring(0, range.start.character);
         const mapping = this.componentMapper.getMapping(document);
         const mappedItem = resolveMappedItem(mapping, rawPrefix, word);
@@ -136,8 +143,15 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             const explicitPath = this.extractStringLiteralPathAtPosition(document, position);
             if (explicitPath && explicitPath.includes('/')) {
                 const parts = explicitPath.split('/');
-                const nameFromPath = parts.pop();
+                const nameFromPath = parts.pop()!;
                 const namespaceFromPath = parts.join('/');
+
+                // 检查光标是否在 namespace 段上（如 'common/a' 中点击 common）
+                if (word !== nameFromPath && parts.includes(word)) {
+                    const moduleDef = this.findModuleDefinition(namespaceFromPath);
+                    if (moduleDef) return moduleDef;
+                }
+
                 if (nameFromPath && namespaceFromPath) {
                     return this.findDefinition(nameFromPath, context.type, namespaceFromPath, currentNamespace, preferLocalFromContext);
                 }

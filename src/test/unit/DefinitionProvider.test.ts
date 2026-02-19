@@ -445,3 +445,81 @@ describe('VuexDefinitionProvider rootState/rootGetters', () => {
         assert.strictEqual((definition as any).rangeOrPosition.line, 40);
     });
 });
+
+describe('VuexDefinitionProvider comment skipping', () => {
+    it('should not resolve definition when cursor is on a single-line comment', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default {\n  methods: {\n    // commit('SET_NAME')\n    run() { this.$store.commit('SET_NAME') }\n  }\n}\n</script>`;
+        const line = text.split('\n')[3];
+        const char = line.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 3, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Definition should not be resolved inside a comment');
+    });
+
+    it('should not resolve definition when cursor is on a block comment line', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default {\n  methods: {\n    /*\n     * commit('SET_NAME')\n     */\n    run() { this.$store.commit('SET_NAME') }\n  }\n}\n</script>`;
+        const line = text.split('\n')[4];
+        const char = line.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 4, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Definition should not be resolved inside a block comment');
+    });
+});
+
+describe('VuexDefinitionProvider namespace segment jump', () => {
+    it('should jump to module file top when clicking namespace segment in commit path', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { run() { this.$store.commit('others/SET_THEME') } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for namespace segment');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to module file top when clicking namespace segment in dispatch path', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { run() { this.$store.dispatch('others/changeTheme') } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for namespace segment');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to item definition when clicking name segment in slash path', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nexport default { methods: { run() { this.$store.commit('others/SET_THEME') } } }\n</script>`;
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for item name');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 8, 'Should jump to item definition line');
+    });
+
+    it('should jump to module file top when clicking namespace in mapGetters array slash path', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default { computed: { ...mapGetters(['user/isActive']) } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('user') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for namespace segment in mapGetters');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+});
