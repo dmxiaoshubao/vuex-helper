@@ -28,11 +28,13 @@ export class ComponentMapper {
     public getMapping(document: vscode.TextDocument): ComponentMapInfo {
         const text = document.getText();
         const uri = document.uri.toString();
+        const fileName = typeof document.fileName === 'string' ? document.fileName : '';
 
-        // For Vue files, extract script content
+        // For Vue SFC files, extract script content.
+        // Host tests may open .vue as javascript/plaintext when Vue language service is unavailable.
         let scriptContent = text;
-
-        if (document.languageId === 'vue') {
+        const isVueSfc = document.languageId === 'vue' || fileName.endsWith('.vue');
+        if (isVueSfc) {
             const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/g;
             const parts: string[] = [];
             let match;

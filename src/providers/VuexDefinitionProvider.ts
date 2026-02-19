@@ -2,24 +2,26 @@ import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
+import { VuexLookupService } from '../services/VuexLookupService';
 import {
     extractStateAccessPath,
     extractRootAccessPath,
     extractBracketPath,
-    buildLookupCandidates,
     hasRootTrueOption,
-    VuexItemType,
+    resolveMappedItem,
 } from '../utils/VuexProviderUtils';
 
 export class VuexDefinitionProvider implements vscode.DefinitionProvider {
     private scanner: VuexContextScanner;
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
+    private lookupService: VuexLookupService;
 
     constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.scanner = new VuexContextScanner();
         this.componentMapper = componentMapper ?? new ComponentMapper();
+        this.lookupService = new VuexLookupService(storeIndexer);
     }
 
     public async provideDefinition(
@@ -37,20 +39,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         // 1. Component Mapping (for this.methodName usage)
         const lineText = document.lineAt(position.line).text;
         const rawPrefix = lineText.substring(0, range.start.character);
-        // Simplified check: if it looks like a property access (this.xxx or vm.xxx)
         const mapping = this.componentMapper.getMapping(document);
-        const mappedItem = mapping[word];
-
+        const mappedItem = resolveMappedItem(mapping, rawPrefix, word);
         if (mappedItem) {
-             return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
-        }
-        const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
-        if (bracketMappedPathPrefix) {
-            const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
-            const bracketMappedItem = mapping[fullMappedKey];
-            if (bracketMappedItem) {
-                return this.findDefinition(bracketMappedItem.originalName, bracketMappedItem.type, bracketMappedItem.namespace);
-            }
+            return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
 
         // 功能 3：检查是否是 state 链式访问的中间路径词（如 state.common.merchant 中的 common）
@@ -197,17 +189,15 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         currentNamespace?: string[],
         preferLocal: boolean = true
     ): vscode.Definition | undefined {
-        const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
-        for (const lookup of lookups) {
-            const lookupName = lookup.name;
-            const lookupNamespace = lookup.namespace;
-            let found = this.findIndexedItem(type, lookupName, lookupNamespace, currentNamespace, preferLocal);
-
-            // 功能 2：root:true 场景优先匹配根模块
-            if (found) return found.defLocation;
-        }
-
-        return undefined;
+        const found = this.lookupService.findItem({
+            name,
+            type,
+            namespace,
+            currentNamespace,
+            preferLocal,
+            allowRootFallback: true
+        });
+        return found?.defLocation;
     }
 
     /**
@@ -218,47 +208,5 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const def = this.storeIndexer.getModuleDefinition(namespace);
         if (!def) return undefined;
         return new vscode.Location(def.uri, new vscode.Position(0, 0));
-    }
-
-    private findIndexedItem(
-        type: 'state' | 'getter' | 'mutation' | 'action',
-        lookupName: string,
-        lookupNamespace?: string,
-        currentNamespace?: string[],
-        preferLocal: boolean = true,
-    ): { defLocation: vscode.Location } | undefined {
-        const typed = this.toItemType(type);
-        if (!typed) return undefined;
-
-        if (lookupNamespace) {
-            const exact = this.storeIndexer.getIndexedItem(typed, lookupName, lookupNamespace);
-            if (exact) return exact as any;
-        }
-
-        if (preferLocal && currentNamespace && !lookupName.includes('/')) {
-            const local = this.storeIndexer.getIndexedItem(typed, lookupName, currentNamespace.join('/'));
-            if (local) return local as any;
-        }
-
-        if (!preferLocal && !lookupNamespace && !lookupName.includes('/')) {
-            const root = this.storeIndexer.getIndexedItem(typed, lookupName, '');
-            if (root) return root as any;
-        }
-
-        if (lookupName.includes('/')) {
-            const byPath = this.storeIndexer.getIndexedItemByFullPath(typed, lookupName);
-            if (byPath) return byPath as any;
-        }
-
-        const allItems = this.storeIndexer.getItemsByType(typed) as any[];
-        return allItems.find((item) => item.name === lookupName);
-    }
-
-    private toItemType(type: 'state' | 'getter' | 'mutation' | 'action'): 'state' | 'getter' | 'mutation' | 'action' | undefined {
-        if (type === 'state') return 'state';
-        if (type === 'getter') return 'getter';
-        if (type === 'mutation') return 'mutation';
-        if (type === 'action') return 'action';
-        return undefined;
     }
 }

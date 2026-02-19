@@ -20,15 +20,15 @@ This baseline tracks performance-sensitive paths for Vuex Helper:
 
 1. `npm run compile`
 2. `npm run test:unit`
-3. Must pass:
-   - `Large Fixture Performance Regression` suite
-   - `StoreParser Incremental` suite
-   - `Provider Cancellation` suite
-4. Timing guard (in `Large Fixture Performance Regression`):
-   - full index duration < `4000ms`
-   - incremental index duration < `2500ms`
-   - incremental duration <= `full * 1.5 + 50ms`
-   - `VuexContextScanner` p95 < `80ms` on large synthetic input
+3. `npm run test:host` (VS Code 宿主环境 smoke)
+4. Must pass `Large Fixture Performance Regression` suite.
+5. Must pass `StoreParser Incremental` suite.
+6. Must pass `Provider Cancellation` suite.
+7. Must pass `Host Performance Smoke` suite.
+8. Timing guard (in `Large Fixture Performance Regression`):
+full index duration < `4000ms`; incremental index duration < `2500ms`; incremental duration <= `full * 1.5 + 50ms`; `VuexContextScanner` p95 < `80ms`.
+9. Host smoke timing guard (in `Host Performance Smoke`):
+definition p95 < `1200ms`; hover p95 < `1200ms`.
 
 ## Acceptance Gates
 

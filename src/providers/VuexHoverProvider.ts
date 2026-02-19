@@ -2,23 +2,26 @@ import * as vscode from 'vscode';
 import { StoreIndexer } from '../services/StoreIndexer';
 import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
+import { VuexLookupService } from '../services/VuexLookupService';
 import {
     extractStateAccessPath,
     extractRootAccessPath,
     extractBracketPath,
-    buildLookupCandidates,
     hasRootTrueOption,
+    resolveMappedItem,
 } from '../utils/VuexProviderUtils';
 
 export class VuexHoverProvider implements vscode.HoverProvider {
     private contextScanner: VuexContextScanner;
     private componentMapper: ComponentMapper;
     private storeIndexer: StoreIndexer;
+    private lookupService: VuexLookupService;
 
     constructor(storeIndexer: StoreIndexer, componentMapper?: ComponentMapper) {
         this.storeIndexer = storeIndexer;
         this.contextScanner = new VuexContextScanner();
         this.componentMapper = componentMapper ?? new ComponentMapper();
+        this.lookupService = new VuexLookupService(storeIndexer);
     }
 
     public async provideHover(
@@ -40,21 +43,11 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         // 2. Component Mapping (this.methodName)
         const lineText = document.lineAt(position.line).text;
         const rawPrefix = lineText.substring(0, range.start.character);
-        const prefix = rawPrefix.trimEnd();
         
         const mapping = this.componentMapper.getMapping(document);
-        const mappedItem = mapping[word];
-        
+        const mappedItem = resolveMappedItem(mapping, rawPrefix, word);
         if (mappedItem) {
             return this.findHover(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
-        }
-        const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
-        if (bracketMappedPathPrefix) {
-            const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
-            const bracketMappedItem = mapping[fullMappedKey];
-            if (bracketMappedItem) {
-                return this.findHover(bracketMappedItem.originalName, bracketMappedItem.type, bracketMappedItem.namespace);
-            }
         }
 
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
@@ -111,16 +104,14 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         currentNamespace?: string[],
         preferLocal: boolean = true
     ): vscode.Hover | undefined {
-        const lookups = buildLookupCandidates(name, type, namespace, currentNamespace);
-        let result: { defLocation: vscode.Location, documentation?: string } | undefined;
+        const result = this.lookupService.findItem({
+            name,
+            type,
+            namespace,
+            currentNamespace,
+            preferLocal
+        }) as { defLocation: vscode.Location, documentation?: string } | undefined;
         let labelPrefix = '';
-
-        for (const lookup of lookups) {
-            const lookupName = lookup.name;
-            const lookupNamespace = lookup.namespace;
-            result = this.findIndexedItem(type, lookupName, lookupNamespace, currentNamespace, preferLocal);
-            if (result) break;
-        }
 
         if (type === 'action') labelPrefix = 'Action';
         else if (type === 'mutation') labelPrefix = 'Mutation';
@@ -145,43 +136,6 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(result.defLocation.uri)}**`);
             return new vscode.Hover(md);
         }
-        return undefined;
-    }
-
-    private findIndexedItem(
-        type: 'state' | 'getter' | 'mutation' | 'action',
-        lookupName: string,
-        lookupNamespace?: string,
-        currentNamespace?: string[],
-        preferLocal: boolean = true,
-    ): { defLocation: vscode.Location, documentation?: string } | undefined {
-        const typed = this.toItemType(type);
-        if (!typed) return undefined;
-
-        if (lookupNamespace) {
-            const exact = this.storeIndexer.getIndexedItem(typed, lookupName, lookupNamespace);
-            if (exact) return exact as any;
-        }
-
-        if (preferLocal && currentNamespace && !lookupName.includes('/')) {
-            const local = this.storeIndexer.getIndexedItem(typed, lookupName, currentNamespace.join('/'));
-            if (local) return local as any;
-        }
-
-        if (lookupName.includes('/')) {
-            const byPath = this.storeIndexer.getIndexedItemByFullPath(typed, lookupName);
-            if (byPath) return byPath as any;
-        }
-
-        const allItems = this.storeIndexer.getItemsByType(typed) as any[];
-        return allItems.find((item) => item.name === lookupName);
-    }
-
-    private toItemType(type: 'state' | 'getter' | 'mutation' | 'action'): 'state' | 'getter' | 'mutation' | 'action' | undefined {
-        if (type === 'state') return 'state';
-        if (type === 'getter') return 'getter';
-        if (type === 'mutation') return 'mutation';
-        if (type === 'action') return 'action';
         return undefined;
     }
 }

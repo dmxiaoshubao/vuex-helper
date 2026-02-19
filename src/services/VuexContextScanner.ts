@@ -31,10 +31,11 @@ export class VuexContextScanner {
     private static readonly ALIAS_ASSIGN_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(commit|dispatch)\b/g;
     private static readonly THIS_ALIAS_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
     private static readonly DESTRUCTURE_REGEX = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
+    private static readonly SEARCH_WINDOW_BEFORE = 6000;
+    private static readonly SEARCH_WINDOW_AFTER = 1200;
 
     // 单条目缓存：同一位置被 completion/hover/definition 连续查询时直接返回
     private contextCache?: { uri: string; version: number; offset: number; result: VuexContext | undefined };
-    private textCache?: { uri: string; version: number; text: string };
 
     /**
      * Determines the Vuex context at the given position.
@@ -64,41 +65,19 @@ export class VuexContextScanner {
     }
 
     private computeContext(document: vscode.TextDocument, position: vscode.Position, offset: number): VuexContext | undefined {
-        const text = this.getDocumentText(document);
+        const window = this.getScanWindow(document, position, offset);
+        if (!window) return undefined;
 
-        // 对于 Vue 文件，只扫描 <script> 标签内的内容
         let scriptStart = 0;
-        let scriptEnd = text.length;
-
         if (document.fileName.endsWith('.vue')) {
-            const scriptRegex = /<script[^>]*>/g;
-            let inScript = false;
-            let hasScriptTag = false;
-            let match;
-            while ((match = scriptRegex.exec(text)) !== null) {
-                hasScriptTag = true;
-                const tagEnd = match.index + match[0].length;
-                const closeIndex = text.indexOf('</script>', tagEnd);
-                if (closeIndex === -1) continue;
-                if (offset >= tagEnd && offset <= closeIndex) {
-                    scriptStart = tagEnd;
-                    scriptEnd = closeIndex;
-                    inScript = true;
-                    break;
-                }
-            }
-            // 有 <script> 标签但光标不在任何标签内，返回 undefined
-            if (hasScriptTag && !inScript) return undefined;
-            // 没有 <script> 标签时，视整个内容为脚本（兼容测试场景）
+            const scriptScope = this.resolveVueScriptScope(window.text, window.localOffset);
+            if (!scriptScope.inScript) return undefined;
+            scriptStart = scriptScope.start;
         }
 
         // Safety check limit (look back max 2000 chars, but not before script start)
-        const searchLimit = Math.max(scriptStart, offset - 2000);
-
-        // Forward Scan on Window to simplify parsing
-        const windowStart = searchLimit;
-        const windowEnd = offset;
-        const snippet = text.substring(windowStart, windowEnd);
+        const searchLimit = Math.max(scriptStart, window.localOffset - 2000);
+        const snippet = window.text.substring(searchLimit, window.localOffset);
         const helperContext = this.collectHelperContext(snippet);
 
         // Tokenize properly retaining string values to extract arguments
@@ -110,18 +89,80 @@ export class VuexContextScanner {
         return result;
     }
 
-    private getDocumentText(document: vscode.TextDocument): string {
-        const uri = document.uri?.toString();
-        const version = document.version;
-        if (uri && this.textCache && this.textCache.uri === uri && this.textCache.version === version) {
-            return this.textCache.text;
+    private getScanWindow(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        offset: number
+    ): { text: string; localOffset: number } | undefined {
+        const hasRangeApi =
+            typeof (document as any).positionAt === 'function' &&
+            typeof (document as any).lineCount === 'number' &&
+            typeof (document as any).lineAt === 'function';
+
+        if (!hasRangeApi) {
+            const text = document.getText();
+            return { text, localOffset: offset };
         }
 
-        const text = document.getText();
-        if (uri) {
-            this.textCache = { uri, version, text };
+        const startOffset = Math.max(0, offset - VuexContextScanner.SEARCH_WINDOW_BEFORE);
+        const endOffset = Math.min(
+            this.getDocumentEndOffset(document),
+            offset + VuexContextScanner.SEARCH_WINDOW_AFTER
+        );
+        const text = document.getText(
+            new vscode.Range(
+                document.positionAt(startOffset),
+                document.positionAt(endOffset)
+            )
+        );
+        const localOffset = Math.max(0, Math.min(text.length, offset - startOffset));
+        return { text, localOffset };
+    }
+
+    private getDocumentEndOffset(document: vscode.TextDocument): number {
+        const lastLineIndex = Math.max(0, document.lineCount - 1);
+        const lastLine = document.lineAt(lastLineIndex);
+        return document.offsetAt(new vscode.Position(lastLineIndex, lastLine.text.length));
+    }
+
+    private resolveVueScriptScope(windowText: string, localOffset: number): { inScript: boolean; start: number; end: number } {
+        const scriptOpenRegex = /<script\b[^>]*>/gi;
+        const scriptCloseToken = '</script>';
+        let lastOpenStart = -1;
+        let lastOpenEnd = -1;
+
+        for (const match of windowText.matchAll(scriptOpenRegex)) {
+            const openStart = match.index ?? -1;
+            if (openStart < 0 || openStart > localOffset) break;
+            lastOpenStart = openStart;
+            lastOpenEnd = openStart + match[0].length;
         }
-        return text;
+
+        const lastCloseBeforeCursor = windowText.lastIndexOf(scriptCloseToken, localOffset);
+        if (lastOpenStart >= 0 && lastOpenStart > lastCloseBeforeCursor) {
+            const closeAfterCursor = windowText.indexOf(scriptCloseToken, localOffset);
+            return {
+                inScript: true,
+                start: lastOpenEnd,
+                end: closeAfterCursor >= 0 ? closeAfterCursor : windowText.length
+            };
+        }
+
+        // 兼容窗口从 script 中间开始的情况：左侧看不到 <script>，但右侧存在 </script>。
+        if (lastOpenStart < 0 && windowText.indexOf(scriptCloseToken, localOffset) >= 0) {
+            return {
+                inScript: true,
+                start: 0,
+                end: windowText.indexOf(scriptCloseToken, localOffset)
+            };
+        }
+
+        // 无 script 标签时按脚本内容处理（兼容测试及非标准片段）。
+        if (!/<script\b/i.test(windowText) && !windowText.includes(scriptCloseToken)) {
+            return { inScript: true, start: 0, end: windowText.length };
+        }
+
+        return { inScript: false, start: 0, end: windowText.length };
     }
 
     private tokenize(code: string): { type: 'word' | 'symbol' | 'string', value: string, index: number }[] {

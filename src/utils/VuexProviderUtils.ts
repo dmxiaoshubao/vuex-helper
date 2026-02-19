@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 
 export type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
+export type VuexMappedItemType = 'state' | 'getter' | 'mutation' | 'action';
+
+export interface VuexMappedInfo {
+    type: VuexMappedItemType;
+    originalName: string;
+    namespace?: string;
+}
 
 /**
  * 三个 Provider（Completion / Definition / Hover）共用的工具函数。
@@ -32,6 +39,22 @@ export function extractBracketPath(rawPrefix: string, keyword: string): string |
     const match = rawPrefix.match(pattern);
     if (!match) return undefined;
     return match[1] || '';
+}
+
+/** 解析 this['a/b'] / vm['a/b'] 或 this.foo 场景下的映射项 */
+export function resolveMappedItem(
+    mapping: Record<string, VuexMappedInfo>,
+    rawPrefix: string,
+    word: string
+): VuexMappedInfo | undefined {
+    const direct = mapping[word];
+    if (direct) return direct;
+
+    const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
+    if (!bracketMappedPathPrefix) return undefined;
+
+    const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
+    return mapping[fullMappedKey];
 }
 
 /** 构建查找候选项，统一处理命名空间和点号路径 */

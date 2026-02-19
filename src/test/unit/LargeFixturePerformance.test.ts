@@ -47,6 +47,66 @@ describe('Large Fixture Performance Regression', () => {
         assert.strictEqual(first, second, 'Repeated query at same position should reuse context cache');
     });
 
+    it('should prefer range-window reads when TextDocument range APIs are available', () => {
+        const scanner = new VuexContextScanner();
+        const filler = new Array(300).fill('const noop = 1;').join('\n');
+        const source = `${filler}\n<script>\nexport default { computed: { ...mapState([ ]) } }\n</script>`;
+        const lines = source.split('\n');
+
+        const targetLine = lines.findIndex((line) => line.includes('mapState([ ])'));
+        const targetChar = lines[targetLine].indexOf('[ ]') + 2;
+        const targetOffset = (() => {
+            let offset = 0;
+            for (let i = 0; i < targetLine; i++) offset += lines[i].length + 1;
+            return offset + targetChar;
+        })();
+
+        let fullGetTextCalls = 0;
+        let rangeGetTextCalls = 0;
+        const lineOffsets: number[] = [];
+        let cursor = 0;
+        for (const line of lines) {
+            lineOffsets.push(cursor);
+            cursor += line.length + 1;
+        }
+
+        const document = {
+            fileName: '/mock/workspace/src/components/Windowed.vue',
+            languageId: 'vue',
+            version: 2,
+            uri: { toString: () => 'file:///mock/workspace/src/components/Windowed.vue' },
+            lineCount: lines.length,
+            getText: (range?: any) => {
+                if (!range) {
+                    fullGetTextCalls++;
+                    return source;
+                }
+                rangeGetTextCalls++;
+                const start = lineOffsets[range.start.line] + range.start.character;
+                const end = lineOffsets[range.end.line] + range.end.character;
+                return source.slice(start, end);
+            },
+            lineAt: (lineOrPos: any) => {
+                const line = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
+                return { text: lines[line] || '' };
+            },
+            positionAt: (offset: number) => {
+                let line = 0;
+                while (line + 1 < lineOffsets.length && lineOffsets[line + 1] <= offset) {
+                    line++;
+                }
+                return { line, character: offset - lineOffsets[line] };
+            },
+            offsetAt: (pos: any) => lineOffsets[pos.line] + pos.character,
+        } as any;
+        const position = { line: targetLine, character: targetChar } as any;
+
+        const context = scanner.getContext(document, position);
+        assert.ok(context && context.type === 'state', 'Windowed read should still resolve Vuex context');
+        assert.ok(rangeGetTextCalls > 0, 'Expected scanner to read via range window');
+        assert.strictEqual(fullGetTextCalls, 0, 'Scanner should avoid full document reads when range APIs are available');
+    });
+
     it('should keep core hot path timings under baseline thresholds', async () => {
         const indexer = new StoreIndexer(fixtureRoot);
         const changedFile = path.join(fixtureRoot, 'src/store/modules/alpha.js');

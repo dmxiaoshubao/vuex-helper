@@ -54,6 +54,8 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test:unit": "npm run compile && mocha out/test/setup.js out/test/unit/*.test.js",
+    "test:host": "npm run compile && node ./out/test/runHostTest.js",
+    "test:host:vue": "npm run compile && HOST_TEST_EXT_MODE=with-vue node ./out/test/runHostTest.js",
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {

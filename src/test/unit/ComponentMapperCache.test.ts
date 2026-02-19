@@ -2,11 +2,18 @@ import * as assert from 'assert';
 
 import { ComponentMapper } from '../../services/ComponentMapper';
 
-function createDocument(uri: string, version: number, text: string) {
+function createDocument(
+    uri: string,
+    version: number,
+    text: string,
+    languageId: string = 'vue',
+    fileName: string = '/mock/workspace/src/components/Test.vue'
+) {
     return {
         uri: { toString: () => uri },
         version,
-        languageId: 'vue',
+        languageId,
+        fileName,
         getText: () => text
     } as any;
 }
@@ -66,5 +73,29 @@ describe('ComponentMapper Cache', () => {
         );
         const secondMapping = mapper.getMapping(second);
         assert.ok(secondMapping.count, 'Semantic-stable edit should reuse previous mapping');
+    });
+
+    it('should extract script content for .vue files even when languageId is javascript', () => {
+        const mapper = new ComponentMapper();
+        const doc = createDocument(
+            'file:///app.vue',
+            1,
+            `<template><div>{{ ok }}</div></template>
+<script>
+import { mapMutations } from 'vuex'
+export default {
+  methods: {
+    ...mapMutations(['others/SET_THEME'])
+  }
+}
+</script>`,
+            'javascript',
+            '/mock/workspace/src/App.vue'
+        );
+
+        const mapping = mapper.getMapping(doc);
+        assert.ok(mapping['others/SET_THEME'], 'Should keep mapped key from <script> in .vue files');
+        assert.strictEqual(mapping['others/SET_THEME'].type, 'mutation');
+        assert.strictEqual(mapping['others/SET_THEME'].originalName, 'others/SET_THEME');
     });
 });
