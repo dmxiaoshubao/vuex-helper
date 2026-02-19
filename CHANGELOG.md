@@ -2,6 +2,31 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.0.0] - 2026-02-19
+
+### Added
+
+- **Imported store instance support**: Added completion / definition / hover support for direct store imports (e.g. `import store from '@/store'`).
+- **Vue host smoke expansion**: Added App.vue real-case host smoke coverage and Vue extension fallback strategy (prefer Volar, fallback to Vetur).
+- **Engineering workflow rules**: Added developer-facing engineering rules for quality, caching, performance, and test gates.
+
+### Fixed
+
+- **Optional-chain store access gaps**: Fixed multiple unresolved cases in optional-chain dot/bracket access across completion, hover, and definition.
+- **Direct imported store method context**: Fixed missing root-store behavior for imported `store.commit/dispatch` in module context.
+- **Comment-line false positives**: Hover/definition no longer trigger on single-line and block comment lines.
+- **Module namespace segment jump target**: Namespace-segment jump now consistently targets module file top.
+- **Unit test runner isolation**: Fixed host test loading leakage in unit test runs.
+- **PathResolver/StoreParser robustness**: Fixed path resolver race condition and store parser hoisting-related resolution failures.
+- **Root option detection precision**: Fixed `commit/dispatch` root option parsing by narrowing to the active call body.
+
+### Improved
+
+- **Indexing performance**: Reduced incremental overhead and unnecessary full reindex operations.
+- **Hot-path caching**: Consolidated provider/scanner utility logic and tightened cache reuse in hot paths.
+- **Performance baselines**: Tightened quality/performance baseline gates with large-fixture and host smoke coverage.
+- **Type safety and lint quality**: Replaced broad `any` usage in critical paths and strengthened lint gates.
+
 ## [0.1.0] - 2026-02-14
 
 ### Added

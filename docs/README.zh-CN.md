@@ -14,9 +14,10 @@
 
 #### ![Jump to Definition](../images/jump_definition.gif)
 
-- **支持**: `this.$store.state/getters/commit/dispatch`
+- **支持**: `this.$store.state/getters/commit/dispatch`，以及直接导入的 store 实例（如 `import store from '@/store'`）
 - **Map 辅助函数**: `mapState`, `mapGetters`, `mapMutations`, `mapActions`
 - **命名空间**: 完美支持 Namespaced 模块及其嵌套。
+- **可选链**: 支持 `?.` 形式的 store 访问链。
 
 ### 2. 智能代码补全 (Intelligent Code Completion)
 
@@ -33,6 +34,7 @@
 - **组件映射方法**: 输入 `this.` 即可提示映射的方法（例如 `this.increment` 映射自 `...mapMutations(['increment'])`）。
 - **方括号语法**: 支持 `this['namespace/method']` 语法访问映射属性。
 - **语法支持**: 支持数组语法和对象别名语法 (例如 `...mapActions({ alias: 'name' })`)。
+- **导入 Store 补全**: 支持 `import store from '@/store'` 后的 `store.state/getters/commit/dispatch` 补全。
 
 ### 3. 悬浮提示与类型推导 (Hover Information & Type Inference)
 
@@ -46,6 +48,7 @@
 - **State 类型**: 在悬浮提示中自动推导并显示 State 属性的类型 (例如 `(State) appName: string`)。
 - **详细信息**: 显示类型（State/Mutation等）及定义所在的文件路径。
 - **映射方法**: 支持查看映射方法的 Store 文档。
+- **导入 Store 悬浮**: 支持直接导入 store 实例后的悬浮提示。
 
 ### 4. Store 内部调用 (Store Internal Usage)
 
@@ -75,6 +78,9 @@
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  import store from "@/store";
+  store.commit("SET_NAME", value);
+  store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // 根命名空间切换
   ```
 - **组件方法**:
@@ -96,6 +102,8 @@
 | `mapMutations` — 数组 / 对象                | ✅   |                                                    |
 | `mapActions` — 数组 / 对象                  | ✅   |                                                    |
 | `this.$store.state/getters/commit/dispatch` | ✅   | 点号和方括号语法                                   |
+| 导入 store 实例访问                          | ✅   | `import store from '@/store'`                      |
+| Store 可选链访问                              | ✅   | `this.$store?.getters?.['a/b']`                    |
 | `createNamespacedHelpers`                   | ✅   |                                                    |
 | 对象风格 commit                             | ✅   | `commit({ type: 'inc' })`                          |
 | `state` 函数形式                            | ✅   | `state: () => ({})`                                |
@@ -123,6 +131,16 @@
   - 绝对路径: `/User/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 1.0.0
+
+1.0 正式版重点能力：
+
+- **新增**: 支持直接导入 store 实例（`import store from '@/store'`）的补全、定义跳转、悬浮提示。
+- **新增**: 覆盖 `$store` 与导入 store 的可选链访问（`?.`）场景。
+- **新增**: Host 性能烟测支持 Vue 扩展优先级回退（优先 Volar，不存在时回退 Vetur）。
+- **优化**: 基于 `tsconfig/jsconfig` 的 `paths` 解析来判定别名导入是否为 store。
+- **优化**: Provider/Context 热路径缓存进一步收敛，真实项目用例下延迟更稳定。
 
 ### 0.1.0
 

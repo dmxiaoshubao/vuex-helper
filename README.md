@@ -16,9 +16,10 @@ Jump directly to the definition of Vuex store properties from your components.
 
 #### ![Jump to Definition](images/jump_definition.gif)
 
-- **Support**: `this.$store.state/getters/commit/dispatch`
+- **Support**: `this.$store.state/getters/commit/dispatch`, imported store instance access (e.g. `import store from '@/store'`)
 - **Map Helpers**: `mapState`, `mapGetters`, `mapMutations`, `mapActions`
 - **Namespace**: Supports namespaced modules.
+- **Optional Chaining**: Supports `?.` in store access chains.
 
 ### 2. Intelligent Code Completion (IntelliSense)
 
@@ -35,6 +36,7 @@ Intelligent suggestions for Vuex keys and mapped methods.
 - **Mapped Methods**: Type `this.` to see mapped methods (e.g., `this.increment` mapped from `...mapMutations(['increment'])`).
 - **Bracket Notation**: Support `this['namespace/method']` syntax for accessing mapped properties.
 - **Map Helpers**: Supports array and object syntax (e.g., `...mapActions({ alias: 'name' })`).
+- **Imported Store Completion**: Supports `store.state/getters/commit/dispatch` after direct store import.
 
 ### 3. Hover Information & Type Inference
 
@@ -48,6 +50,7 @@ View JSDoc documentation, details, and inferred types without leaving your code.
 - **Type Inference**: Automatically infers and displays the type of State properties in hover tooltips (e.g., `(State) appName: string`).
 - **Mapped Methods**: View documentation for mapped methods.
 - **Details**: Shows the type (State/Mutation/etc.) and the file path of the definition.
+- **Imported Store Hover**: Supports hover info for direct store import usage.
 
 ### 4. Store Internal Usage
 
@@ -81,6 +84,9 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  import store from "@/store";
+  store.commit("SET_NAME", value);
+  store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // Root namespace switch
   ```
 - **Component Methods**:
@@ -102,6 +108,8 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 | `mapMutations` — array / object             | ✅     |                                                    |
 | `mapActions` — array / object               | ✅     |                                                    |
 | `this.$store.state/getters/commit/dispatch` | ✅     | Dot and bracket notation                           |
+| Imported store instance access              | ✅     | `import store from '@/store'`                      |
+| Store access optional chaining              | ✅     | `this.$store?.getters?.['a/b']`                    |
 | `createNamespacedHelpers`                   | ✅     |                                                    |
 | Object-style commit                         | ✅     | `commit({ type: 'inc' })`                          |
 | `state` as function                         | ✅     | `state: () => ({})`                                |
@@ -116,6 +124,16 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
 
 ## Release Notes
+
+### 1.0.0
+
+Feature-focused 1.0 release:
+
+- **Added**: Direct imported store instance support (`import store from '@/store'`) for completion, definition, and hover.
+- **Added**: Optional-chain access coverage (`?.`) across `$store` and imported store access patterns.
+- **Added**: Vue host smoke workflow supports Vue extension fallback priority (Volar first, fallback to Vetur).
+- **Improved**: Alias-based store import detection now respects `tsconfig/jsconfig` `paths` resolution.
+- **Improved**: Provider/context hot paths are further cached to keep latency stable under real-world fixtures.
 
 ### 0.1.0
 
