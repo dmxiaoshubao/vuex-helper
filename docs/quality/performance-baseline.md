@@ -24,6 +24,11 @@ This baseline tracks performance-sensitive paths for Vuex Helper:
    - `Large Fixture Performance Regression` suite
    - `StoreParser Incremental` suite
    - `Provider Cancellation` suite
+4. Timing guard (in `Large Fixture Performance Regression`):
+   - full index duration < `4000ms`
+   - incremental index duration < `2500ms`
+   - incremental duration <= `full * 1.5 + 50ms`
+   - `VuexContextScanner` p95 < `80ms` on large synthetic input
 
 ## Acceptance Gates
 
@@ -34,8 +39,5 @@ This baseline tracks performance-sensitive paths for Vuex Helper:
 
 ## Notes
 
-- This baseline currently focuses on behavioral regression detection instead of absolute timing thresholds.
-- If future CI environments become stable enough for timing assertions, add explicit p95 targets for:
-  - full index duration
-  - incremental index duration
-  - completion request latency
+- The current timing thresholds are intentionally conservative to reduce CI flakiness while still catching obvious regressions.
+- If CI variance becomes lower, tighten thresholds gradually and add completion p95 targets.

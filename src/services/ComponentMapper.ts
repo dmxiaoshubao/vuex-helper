@@ -18,6 +18,9 @@ export class ComponentMapper {
     
     private readonly maxCacheEntries = 100;
     private cache: Map<string, { version: number, signature: string, mapping: ComponentMapInfo }> = new Map();
+    private static readonly NO_VUEX_SIGNATURE = '__no_vuex_helpers__';
+    private static readonly VUEX_HINT_REGEX =
+        /(mapState|mapGetters|mapMutations|mapActions|createNamespacedHelpers|from\s+['"]vuex['"]|require\(\s*['"]vuex['"]\s*\))/;
 
     /**
      * Analyzes the given document to find Vuex mapHelpers and build a mapping.
@@ -40,7 +43,10 @@ export class ComponentMapper {
                 scriptContent = parts.join('\n');
             }
         }
-        const semanticSignature = this.computeSemanticSignature(scriptContent);
+        const hasVuexHint = ComponentMapper.VUEX_HINT_REGEX.test(scriptContent);
+        const semanticSignature = hasVuexHint
+            ? this.computeSemanticSignature(scriptContent)
+            : ComponentMapper.NO_VUEX_SIGNATURE;
 
         const cached = this.cache.get(uri);
         if (cached && (cached.version === document.version || cached.signature === semanticSignature)) {
@@ -51,6 +57,14 @@ export class ComponentMapper {
             this.cache.delete(uri);
             this.cache.set(uri, cached);
             return cached.mapping;
+        }
+
+        // 快速路径：该脚本与 Vuex map helpers 无关，避免不必要 AST 解析。
+        if (!hasVuexHint) {
+            const emptyMapping: ComponentMapInfo = {};
+            this.cache.set(uri, { version: document.version, signature: semanticSignature, mapping: emptyMapping });
+            this.trimCache();
+            return emptyMapping;
         }
 
         // 预处理：修复不完整的代码，使其能够被解析

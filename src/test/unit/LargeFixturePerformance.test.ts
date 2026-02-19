@@ -47,6 +47,57 @@ describe('Large Fixture Performance Regression', () => {
         assert.strictEqual(first, second, 'Repeated query at same position should reuse context cache');
     });
 
+    it('should keep core hot path timings under baseline thresholds', async () => {
+        const indexer = new StoreIndexer(fixtureRoot);
+        const changedFile = path.join(fixtureRoot, 'src/store/modules/alpha.js');
+
+        const fullStart = performance.now();
+        await indexer.index();
+        const fullDurationMs = performance.now() - fullStart;
+
+        const incrementalStart = performance.now();
+        await indexer.index({ changedFiles: [changedFile] });
+        const incrementalDurationMs = performance.now() - incrementalStart;
+
+        assert.ok(fullDurationMs < 4000, `Full index baseline exceeded: ${fullDurationMs.toFixed(2)}ms`);
+        assert.ok(incrementalDurationMs < 2500, `Incremental index baseline exceeded: ${incrementalDurationMs.toFixed(2)}ms`);
+        assert.ok(
+            incrementalDurationMs <= fullDurationMs * 1.5 + 50,
+            `Incremental index should stay near full-index baseline (full=${fullDurationMs.toFixed(2)}ms, incremental=${incrementalDurationMs.toFixed(2)}ms)`
+        );
+
+        const scanner = new VuexContextScanner();
+        const filler = new Array(260).fill('const keep = 1;').join('\n');
+        const source = `${filler}\nexport default { computed: { ...mapState([ ]) } }`;
+        const lines = source.split('\n');
+        const lineIndex = lines.length - 1;
+        const col = lines[lineIndex].indexOf('[ ]') + 2;
+        const baseOffset = source.indexOf('[ ]') + 2;
+
+        const durations: number[] = [];
+        for (let i = 0; i < 20; i++) {
+            const doc = {
+                fileName: '/mock/workspace/src/components/App.vue',
+                languageId: 'vue',
+                version: 100 + i, // 让每次都走真实计算路径，避免单点缓存掩盖性能回归
+                uri: { toString: () => `file:///mock/workspace/src/components/App-${i}.vue` },
+                getText: () => source,
+                offsetAt: (_pos: any) => baseOffset,
+            } as any;
+            const position = { line: lineIndex, character: col } as any;
+
+            const t0 = performance.now();
+            const context = scanner.getContext(doc, position);
+            const elapsed = performance.now() - t0;
+            durations.push(elapsed);
+            assert.ok(context && context.type === 'state', 'Scanner should resolve state context on large input');
+        }
+
+        const sorted = durations.slice().sort((a, b) => a - b);
+        const p95 = sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)];
+        assert.ok(p95 < 80, `VuexContextScanner p95 exceeded baseline: ${p95.toFixed(2)}ms`);
+    });
+
     it('should keep ComponentMapper mapping stable for large non-semantic edits', () => {
         const mapper = new ComponentMapper();
         const filler = new Array(200).fill('// filler-line').join('\n');

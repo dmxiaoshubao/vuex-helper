@@ -57,7 +57,6 @@ export class StoreParser {
 
         const namespaceSnapshot = new Map(this.fileNamespaceMap);
         this.prepareIncrementalState(affectedFiles);
-        this.pathResolver.clearCache();
 
         const parseContext: ParseContext = {
             allowedFiles: new Set(affectedFiles),
