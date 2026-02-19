@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
-import { StoreIndexer } from "../services/StoreIndexer";
+import { StoreIndexer, VuexAnyItem } from "../services/StoreIndexer";
 import { VuexContextScanner } from "../services/VuexContextScanner";
 import { ComponentMapper } from "../services/ComponentMapper";
+import { VuexStoreMap } from "../types";
 import {
   hasRootTrueOption,
 } from "../utils/VuexProviderUtils";
@@ -100,23 +101,23 @@ export class VuexCompletionItemProvider
       } else {
         // Normal Logic
         if (vuexContext.type === "state" && itemType) {
-          items = this.storeIndexer.getItemsByType(itemType) as any[];
+          items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Field;
         } else if (vuexContext.type === "getter" && itemType) {
-          items = this.storeIndexer.getItemsByType(itemType) as any[];
+          items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Property;
         } else if (vuexContext.type === "mutation" && itemType) {
-          items = this.storeIndexer.getItemsByType(itemType) as any[];
+          items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Method;
         } else if (vuexContext.type === "action" && itemType) {
-          items = this.storeIndexer.getItemsByType(itemType) as any[];
+          items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Function;
         }
 
         // Filtering by Namespace
         if (vuexContext.namespace && itemType) {
           const ns = vuexContext.namespace;
-          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, ns) as any[];
+          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, ns);
         } else if (
           currentNamespace &&
           itemType &&
@@ -128,7 +129,7 @@ export class VuexCompletionItemProvider
           // If inside a module, scoped completion for commit/dispatch
           // Filter to only current module items (Strict scoping as per user request)
           const nsJoined = currentNamespace.join("/");
-          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, nsJoined) as any[];
+          items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, nsJoined);
         }
       }
 
@@ -428,7 +429,7 @@ export class VuexCompletionItemProvider
       const storeItems =
         propertyType === "state" ? storeMap.state : storeMap.getters;
 
-      storeItems.forEach((item: any) => {
+      storeItems.forEach((item) => {
         const fullPath = this.getFullPath(item);
 
         // 如果 partialInput 有内容且包含空格，进行精确匹配
@@ -523,7 +524,7 @@ export class VuexCompletionItemProvider
       if (propertyType === "getters" && modulePath.length === 0) {
         const storeItems = storeMap.getters;
         const suggestions = new Map<string, vscode.CompletionItem>();
-        storeItems.forEach((item: any) => {
+        storeItems.forEach((item) => {
           const fullPath = this.getFullPath(item);
           if (!suggestions.has(fullPath)) {
             const ci = this.createCompletionItem(
@@ -558,7 +559,7 @@ export class VuexCompletionItemProvider
 
       const suggestions = new Map<string, vscode.CompletionItem>();
 
-      storeItems.forEach((item: any) => {
+      storeItems.forEach((item) => {
         // 检查 item 是否匹配当前模块路径
         if (item.modulePath.length < modulePath.length) return;
         for (let i = 0; i < modulePath.length; i++) {
@@ -711,7 +712,7 @@ export class VuexCompletionItemProvider
       );
       const suggestions = new Map<string, vscode.CompletionItem>();
 
-      storeMap.state.forEach((item: any) => {
+      storeMap.state.forEach((item) => {
         if (item.modulePath.length < targetPath.length) return;
         for (let i = 0; i < targetPath.length; i++) {
           if (item.modulePath[i] !== targetPath[i]) return;
@@ -752,7 +753,7 @@ export class VuexCompletionItemProvider
         position.line, position.character, currentInput.length, accessToken,
       );
       const suggestions = new Map<string, vscode.CompletionItem>();
-      storeMap.getters.forEach((item: any) => {
+      storeMap.getters.forEach((item) => {
         const fullPath = this.getFullPath(item);
         if (!suggestions.has(fullPath)) {
           const ci = this.createCompletionItem(fullPath, vscode.CompletionItemKind.Property, "[Vuex] rootGetters", item.documentation);
@@ -781,7 +782,7 @@ export class VuexCompletionItemProvider
       const partialInput = rootGettersBracketMatch[1];
       const items: vscode.CompletionItem[] = [];
 
-      storeMap.getters.forEach((item: any) => {
+      storeMap.getters.forEach((item) => {
         const fullPath = this.getFullPath(item);
         const trimmedInput = partialInput.trim();
         if (partialInput !== trimmedInput && trimmedInput !== fullPath) {
@@ -848,7 +849,7 @@ export class VuexCompletionItemProvider
 
         const suggestions = new Map<string, vscode.CompletionItem>();
 
-        storeMap.state.forEach((item: any) => {
+        storeMap.state.forEach((item) => {
           if (item.modulePath.length < targetPath.length) return;
           for (let i = 0; i < targetPath.length; i++) {
             if (item.modulePath[i] !== targetPath[i]) return;
@@ -1114,7 +1115,7 @@ export class VuexCompletionItemProvider
     name: string,
     type: string,
     namespace: string | undefined,
-    storeMap: any,
+    storeMap: VuexStoreMap,
   ) {
     const itemType = this.toItemType(type);
     if (itemType) {

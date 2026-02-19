@@ -72,6 +72,35 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }));
 
+    // 文件创建时，检查是否需要重新索引
+    context.subscriptions.push(vscode.workspace.onDidCreateFiles(e => {
+        for (const file of e.files) {
+            if (storeIndexer.shouldReindexForFile(file.fsPath)) {
+                scheduler.schedule(file.fsPath);
+            }
+        }
+    }));
+
+    // 文件删除时，触发全量重建以清除陈旧索引
+    context.subscriptions.push(vscode.workspace.onDidDeleteFiles(e => {
+        for (const file of e.files) {
+            if (storeIndexer.shouldReindexForFile(file.fsPath)) {
+                scheduler.schedule(); // 无参数 = 全量重建
+                break; // 一次全量足矣
+            }
+        }
+    }));
+
+    // 文件重命名时，触发全量重建
+    context.subscriptions.push(vscode.workspace.onDidRenameFiles(e => {
+        for (const { oldUri, newUri } of e.files) {
+            if (storeIndexer.shouldReindexForFile(oldUri.fsPath) || storeIndexer.shouldReindexForFile(newUri.fsPath)) {
+                scheduler.schedule(); // 全量重建
+                break;
+            }
+        }
+    }));
+
     const selector = [{ language: 'vue', scheme: 'file' }, { language: 'javascript', scheme: 'file' }, { language: 'typescript', scheme: 'file' }];
 
     context.subscriptions.push(

@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
 import * as parser from '@babel/parser';
-import traverse from '@babel/traverse';
+import traverse, { NodePath } from '@babel/traverse';
+import type * as t from '@babel/types';
 import { PathResolver } from '../utils/PathResolver';
 
 export interface EntryAnalyzeOptions {
@@ -164,31 +165,31 @@ export class EntryAnalyzer {
             });
 
             const importMap: Record<string, string> = {};
-            const localVars: Record<string, any> = {};
-            let foundStoreRef: any = null;
+            const localVars: Record<string, t.Node | null | undefined> = {};
+            let foundStoreRef: t.Node | null = null;
 
             // 单次 traverse 同时收集 imports/localVars 和查找 store 注入
             traverse(ast, {
-                ImportDeclaration: (path: any) => {
+                ImportDeclaration: (path: NodePath<t.ImportDeclaration>) => {
                     const source = path.node.source?.value;
                     if (!source) return;
-                    path.node.specifiers.forEach((specifier: any) => {
+                    path.node.specifiers.forEach((specifier) => {
                         if (specifier.local?.name) {
                             importMap[specifier.local.name] = source;
                         }
                     });
                 },
-                VariableDeclarator: (path: any) => {
+                VariableDeclarator: (path: NodePath<t.VariableDeclarator>) => {
                     if (path.node.id?.type === 'Identifier') {
                         localVars[path.node.id.name] = path.node.init;
                     }
                 },
-                FunctionDeclaration: (path: any) => {
+                FunctionDeclaration: (path: NodePath<t.FunctionDeclaration>) => {
                     if (path.node.id?.name) {
                         localVars[path.node.id.name] = path.node;
                     }
                 },
-                NewExpression: (path: any) => {
+                NewExpression: (path: NodePath<t.NewExpression>) => {
                     if (foundStoreRef) return;
                     const callee = path.node.callee;
                     if (!(callee.type === 'Identifier' && callee.name === 'Vue')) return;
@@ -198,7 +199,7 @@ export class EntryAnalyzer {
                     const optionsObject = this.resolveObjectExpression(args[0], localVars, 0, new Set());
                     if (!optionsObject) return;
 
-                    for (const prop of optionsObject.properties) {
+                    for (const prop of (optionsObject as t.ObjectExpression).properties) {
                         if (prop.type !== 'ObjectProperty') continue;
                         if (prop.key.type !== 'Identifier' || prop.key.name !== 'store') continue;
                         foundStoreRef = prop.value;
@@ -218,11 +219,11 @@ export class EntryAnalyzer {
     }
 
     private resolveObjectExpression(
-        node: any,
-        localVars: Record<string, any>,
+        node: t.Node | null | undefined,
+        localVars: Record<string, t.Node | null | undefined>,
         depth: number,
         seen: Set<string>
-    ): any | null {
+    ): t.Node | null {
         if (!node || depth > 10) return null;
 
         if (node.type === 'ObjectExpression') {
@@ -254,11 +255,11 @@ export class EntryAnalyzer {
     }
 
     private resolveFunctionReturnObject(
-        node: any,
-        localVars: Record<string, any>,
+        node: t.Node | null | undefined,
+        localVars: Record<string, t.Node | null | undefined>,
         depth: number,
         seen: Set<string>
-    ): any | null {
+    ): t.Node | null {
         if (!node || depth > 10) return null;
         if (node.type !== 'FunctionDeclaration' && node.type !== 'FunctionExpression' && node.type !== 'ArrowFunctionExpression') {
             return null;
@@ -278,9 +279,9 @@ export class EntryAnalyzer {
     }
 
     private async resolveStorePathFromNode(
-        node: any,
+        node: t.Node | null | undefined,
         importMap: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         filePath: string,
         depth: number,
         seen: Set<string>

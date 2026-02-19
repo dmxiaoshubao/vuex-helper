@@ -27,17 +27,6 @@
       "type": "object",
       "title": "Vuex Helper",
       "properties": {
-        "vuexHelper.trace.server": {
-          "scope": "window",
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Traces the communication between VS Code and the language server."
-        },
         "vuexHelper.storeEntry": {
           "scope": "resource",
           "type": "string",

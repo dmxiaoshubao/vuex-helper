@@ -1,5 +1,6 @@
 import * as parser from '@babel/parser';
-import traverse from '@babel/traverse';
+import traverse, { NodePath } from '@babel/traverse';
+import type * as t from '@babel/types';
 import * as vscode from 'vscode';
 
 export interface ComponentMapInfo {
@@ -113,15 +114,16 @@ export class ComponentMapper {
 
             // 合并三次 AST 遍历为一次
             traverse(ast, {
-                ImportDeclaration: (path: any) => {
+                ImportDeclaration: (path: NodePath<t.ImportDeclaration>) => {
                     const declaration = path.node;
                     if (!declaration.source || declaration.source.value !== 'vuex') return;
 
-                    declaration.specifiers.forEach((specifier: any) => {
+                    declaration.specifiers.forEach((specifier) => {
                         if (!specifier.local || !specifier.local.name) return;
 
-                        if (specifier.type === 'ImportSpecifier' && specifier.imported?.name) {
-                            const importedName = specifier.imported.name;
+                        if (specifier.type === 'ImportSpecifier') {
+                            const imported = specifier.imported;
+                            const importedName = imported.type === 'Identifier' ? imported.name : (imported as t.StringLiteral).value;
                             const localName = specifier.local.name;
                             if (importedName === 'createNamespacedHelpers') {
                                 namespacedFactoryNames.add(localName);
@@ -135,7 +137,7 @@ export class ComponentMapper {
                         }
                     });
                 },
-                VariableDeclarator: (path: any) => {
+                VariableDeclarator: (path: NodePath<t.VariableDeclarator>) => {
                     const declarator = path.node;
 
                     if (
@@ -153,11 +155,11 @@ export class ComponentMapper {
                         declarator.init.arguments?.[0]?.type === 'StringLiteral' &&
                         declarator.init.arguments[0].value === 'vuex'
                     ) {
-                        declarator.id.properties.forEach((prop: any) => {
+                        (declarator.id as t.ObjectPattern).properties.forEach((prop) => {
                             if (prop.type !== 'ObjectProperty') return;
 
-                            const importedName = prop.key?.name || prop.key?.value;
-                            const localName = prop.value?.name || importedName;
+                            const importedName = prop.key.type === 'Identifier' ? prop.key.name : (prop.key as t.StringLiteral).value;
+                            const localName = prop.value.type === 'Identifier' ? (prop.value as t.Identifier).name : importedName;
                             if (!importedName || !localName) return;
 
                             if (importedName === 'createNamespacedHelpers') {
@@ -192,18 +194,18 @@ export class ComponentMapper {
                     }
 
                     if (declarator.id.type === 'ObjectPattern') {
-                        declarator.id.properties.forEach((prop: any) => {
+                        (declarator.id as t.ObjectPattern).properties.forEach((prop) => {
                             if (prop.type !== 'ObjectProperty') return;
 
-                            const importedName = prop.key?.name || prop.key?.value;
-                            if (!importedName || !validHelpers.includes(importedName)) return;
+                            const importedName = prop.key.type === 'Identifier' ? prop.key.name : (prop.key as t.StringLiteral).value;
+                            if (!importedName || !validHelpers.includes(importedName as HelperName)) return;
 
-                            const localName = prop.value?.name || importedName;
+                            const localName = prop.value.type === 'Identifier' ? (prop.value as t.Identifier).name : importedName;
                             helperFunctionInfo[localName] = { namespace, helperName: importedName as HelperName };
                         });
                     }
                 },
-                CallExpression: (path: any) => {
+                CallExpression: (path: NodePath<t.CallExpression>) => {
                     const callee = path.node.callee;
                     let calleeName: string | undefined;
                     let inferredNamespace: string | undefined;
@@ -215,7 +217,7 @@ export class ComponentMapper {
                         inferredNamespace = helperInfo?.namespace;
                         inferredHelperName = helperInfo?.helperName;
                     } else if (callee.type === 'MemberExpression' && callee.property) {
-                        calleeName = callee.property.name;
+                        calleeName = callee.property.type === 'Identifier' ? callee.property.name : undefined;
                         if (callee.object && callee.object.type === 'Identifier') {
                             inferredNamespace = helperObjectNamespace[callee.object.name];
                         }
@@ -240,7 +242,7 @@ export class ComponentMapper {
                         if (args.length === 0) return;
 
                         let namespace: string | undefined = inferredNamespace;
-                        let mapObj: any;
+                        let mapObj: t.Node | undefined;
 
                         // Check for namespace: mapState('ns', [...])
                         if (args[0].type === 'StringLiteral') {
@@ -263,7 +265,7 @@ export class ComponentMapper {
 
                         // Handle Array: mapState(['count']) -> local 'count' maps to store 'count'
                         if (mapObj.type === 'ArrayExpression') {
-                            mapObj.elements.forEach((el: any) => {
+                            (mapObj as t.ArrayExpression).elements.forEach((el) => {
                                 if (el && el.type === 'StringLiteral') {
                                     const name = el.value;
                                     mapping[name] = { type: type!, originalName: name, namespace };
@@ -272,9 +274,11 @@ export class ComponentMapper {
                         }
                         // Handle Object: mapState({ alias: 'count' })
                         else if (mapObj.type === 'ObjectExpression') {
-                            mapObj.properties.forEach((prop: any) => {
+                            (mapObj as t.ObjectExpression).properties.forEach((prop) => {
                                 if (prop.type === 'ObjectProperty') {
-                                    const localName = prop.key.name || prop.key.value;
+                                    const localName = prop.key.type === 'Identifier'
+                                        ? prop.key.name
+                                        : (prop.key as t.StringLiteral).value;
 
                                     if (prop.value.type === 'StringLiteral') {
                                         mapping[localName] = { type: type!, originalName: prop.value.value, namespace };
@@ -292,7 +296,9 @@ export class ComponentMapper {
                                         };
                                     }
                                 } else if (prop.type === 'ObjectMethod') {
-                                    const localName = prop.key.name || prop.key.value;
+                                    const localName = prop.key.type === 'Identifier'
+                                        ? (prop.key as t.Identifier).name
+                                        : (prop.key as t.StringLiteral).value;
                                     const inferredStateName =
                                         type === 'state' ? this.inferStatePropertyNameFromFunction(prop) : undefined;
                                     mapping[localName] = {
@@ -337,12 +343,15 @@ export class ComponentMapper {
         return this.cache.size;
     }
 
-    private inferStatePropertyNameFromFunction(fnNode: any): string | undefined {
-        if (!fnNode || !Array.isArray(fnNode.params) || fnNode.params.length === 0) {
+    private inferStatePropertyNameFromFunction(fnNode: t.Node): string | undefined {
+        if (!fnNode) return undefined;
+        // 确认是函数类型节点
+        const fn = fnNode as t.Function;
+        if (!fn.params || fn.params.length === 0) {
             return undefined;
         }
 
-        const firstParam = fnNode.params[0];
+        const firstParam = fn.params[0];
         if (!firstParam || firstParam.type !== 'Identifier' || !firstParam.name) {
             return undefined;
         }
@@ -356,15 +365,18 @@ export class ComponentMapper {
         return this.inferStatePropertyFromExpression(expr, stateParamName);
     }
 
-    private extractReturnedExpressionFromFunction(fnNode: any): any | undefined {
+    private extractReturnedExpressionFromFunction(fnNode: t.Node): t.Node | undefined {
         if (!fnNode) return undefined;
+        const fn = fnNode as t.Function & { body?: t.Node };
 
-        if (fnNode.type === 'ArrowFunctionExpression' && fnNode.body && fnNode.body.type !== 'BlockStatement') {
-            return fnNode.body;
+        if (fnNode.type === 'ArrowFunctionExpression' && fn.body && fn.body.type !== 'BlockStatement') {
+            return fn.body;
         }
 
-        const body = fnNode.body && fnNode.body.type === 'BlockStatement' ? fnNode.body.body : [];
-        for (const statement of body) {
+        const fnBody = fn.body;
+        const blockBody = fnBody && fnBody.type === 'BlockStatement'
+            ? (fnBody as t.BlockStatement).body : [];
+        for (const statement of blockBody) {
             if (statement.type === 'ReturnStatement' && statement.argument) {
                 return statement.argument;
             }
@@ -372,32 +384,33 @@ export class ComponentMapper {
         return undefined;
     }
 
-    private inferStatePropertyFromExpression(expr: any, stateParamName: string): string | undefined {
+    private inferStatePropertyFromExpression(expr: t.Node, stateParamName: string): string | undefined {
         let current = expr;
 
         // Unwrap wrappers to keep the extraction tolerant while editing.
-        while (current && (current.type === 'TSAsExpression' || current.type === 'TSTypeAssertion' || current.type === 'ParenthesizedExpression' || current.type === 'ChainExpression')) {
-            current = current.expression;
+        while (current && (current.type === 'TSAsExpression' || current.type === 'TSTypeAssertion' || current.type === 'ParenthesizedExpression')) {
+            current = (current as t.TSAsExpression | t.TSTypeAssertion | t.ParenthesizedExpression).expression as t.Node;
         }
 
         if (!current) return undefined;
 
         const segments: string[] = [];
-        let cursor = current;
+        let cursor: t.Node = current;
         while (cursor && (cursor.type === 'MemberExpression' || cursor.type === 'OptionalMemberExpression')) {
-            const propertyNode = cursor.property;
+            const memberCursor = cursor as t.MemberExpression;
+            const propertyNode = memberCursor.property;
             if (!propertyNode) return undefined;
 
             let propName: string | undefined;
-            if (!cursor.computed && propertyNode.type === 'Identifier') {
+            if (!memberCursor.computed && propertyNode.type === 'Identifier') {
                 propName = propertyNode.name;
-            } else if (cursor.computed && propertyNode.type === 'StringLiteral') {
+            } else if (memberCursor.computed && propertyNode.type === 'StringLiteral') {
                 propName = propertyNode.value;
             }
             if (!propName) return undefined;
 
             segments.unshift(propName);
-            cursor = cursor.object;
+            cursor = memberCursor.object;
         }
 
         if (!cursor || cursor.type !== 'Identifier' || cursor.name !== stateParamName) {

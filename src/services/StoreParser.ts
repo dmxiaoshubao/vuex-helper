@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as parser from '@babel/parser';
-import traverse from '@babel/traverse';
+import traverse, { NodePath } from '@babel/traverse';
+import type * as t from '@babel/types';
 import { PathResolver } from '../utils/PathResolver';
 import { VuexStoreMap, VuexStateInfo, VuexGetterInfo, VuexMutationInfo, VuexActionInfo } from '../types';
+
+// Babel AST 中 ObjectExpression.properties 的元素类型
+type ObjectMember = t.ObjectProperty | t.ObjectMethod | t.SpreadElement;
 
 export interface StoreParseOptions {
     changedFiles?: string[];
@@ -133,47 +137,47 @@ export class StoreParser {
      * 单次 traverse 收集所有必要信息：imports、局部变量、store 实例标识符、
      * 导出的 store 对象、动态模块注册
      */
-    private async collectDeclarations(ast: any, filePath: string): Promise<{
+    private async collectDeclarations(ast: t.File, filePath: string): Promise<{
         imports: Record<string, string>;
-        localVars: Record<string, any>;
+        localVars: Record<string, t.Node | null | undefined>;
         storeIdentifiers: Set<string>;
-        exportedStoreObject: any | null;
-        dynamicRegistrations: Array<{ namespace: string[]; moduleNode: any }>;
+        exportedStoreObject: t.Node | null;
+        dynamicRegistrations: Array<{ namespace: string[]; moduleNode: t.Node }>;
     }> {
         const imports: Record<string, string> = {};
-        const localVars: Record<string, any> = {};
+        const localVars: Record<string, t.Node | null | undefined> = {};
         const storeIdentifiers = new Set<string>();
         const rawImports: Array<{ localName: string; source: string }> = [];
 
         // 导出 store 对象收集（原 findExportedStoreObject 逻辑）
-        let exportDefault: any | null = null;
-        let moduleExports: any | null = null;
-        let newExpression: any | null = null;
+        let exportDefault: t.Node | null = null;
+        let moduleExports: t.Node | null = null;
+        let newExpression: t.Node | null = null;
 
         // 动态注册收集（原 processDynamicModuleRegistrations 逻辑）
-        const rawRegistrations: Array<{ call: any }> = [];
+        const rawRegistrations: Array<{ call: t.CallExpression }> = [];
 
         // 延迟解析的 store 候选节点
-        const storeCandidates: Array<{ id: string; init: any }> = [];
-        let exportDefaultCandidate: any | null = null;
-        let moduleExportsCandidate: any | null = null;
-        let newExpressionCandidate: any | null = null;
+        const storeCandidates: Array<{ id: string; init: t.Node }> = [];
+        let exportDefaultCandidate: t.Node | null = null;
+        let moduleExportsCandidate: t.Node | null = null;
+        let newExpressionCandidate: t.Node | null = null;
 
         traverse(ast, {
-            ImportDeclaration: (path: any) => {
+            ImportDeclaration: (path: NodePath<t.ImportDeclaration>) => {
                 const source = path.node.source.value;
-                path.node.specifiers.forEach((specifier: any) => {
+                path.node.specifiers.forEach((specifier) => {
                     if (specifier.local && specifier.local.name) {
                         rawImports.push({ localName: specifier.local.name, source });
                     }
                 });
             },
-            FunctionDeclaration: (path: any) => {
+            FunctionDeclaration: (path: NodePath<t.FunctionDeclaration>) => {
                 if (path.node.id && path.node.id.name) {
                     localVars[path.node.id.name] = path.node;
                 }
             },
-            VariableDeclarator: (path: any) => {
+            VariableDeclarator: (path: NodePath<t.VariableDeclarator>) => {
                 if (path.node.id.type === 'Identifier') {
                     localVars[path.node.id.name] = path.node.init;
                 }
@@ -184,7 +188,7 @@ export class StoreParser {
                     storeCandidates.push({ id: id.name, init: path.node.init });
                 }
             },
-            ExportDefaultDeclaration: (path: any) => {
+            ExportDefaultDeclaration: (path: NodePath<t.ExportDefaultDeclaration>) => {
                 const declaration = path.node.declaration;
                 // store identifier 检测
                 if (declaration && declaration.type === 'Identifier') {
@@ -195,7 +199,7 @@ export class StoreParser {
                     exportDefaultCandidate = declaration;
                 }
             },
-            AssignmentExpression: (path: any) => {
+            AssignmentExpression: (path: NodePath<t.AssignmentExpression>) => {
                 const left = path.node.left;
                 const isModuleExports =
                     left.type === 'MemberExpression' &&
@@ -221,13 +225,13 @@ export class StoreParser {
                     moduleExportsCandidate = right;
                 }
             },
-            NewExpression: (path: any) => {
+            NewExpression: (path: NodePath<t.NewExpression>) => {
                 // 导出 store 对象收集（new Vuex.Store(...)）
                 if (!newExpression) {
                     newExpressionCandidate = path.node;
                 }
             },
-            CallExpression: (path: any) => {
+            CallExpression: (path: NodePath<t.CallExpression>) => {
                 // 动态模块注册检测（store.registerModule(...)）
                 const call = path.node;
                 const callee = call.callee;
@@ -277,9 +281,11 @@ export class StoreParser {
         const exportedStoreObject = exportDefault ?? moduleExports ?? newExpression ?? null;
 
         // 过滤动态注册：仅保留 callee.object 在 storeIdentifiers 中的注册
-        const dynamicRegistrations: Array<{ namespace: string[]; moduleNode: any }> = [];
+        const dynamicRegistrations: Array<{ namespace: string[]; moduleNode: t.Node }> = [];
         for (const { call } of rawRegistrations) {
-            const objectName = call.callee.object.name;
+            const objectName = (call.callee as t.MemberExpression).object.type === 'Identifier'
+                ? ((call.callee as t.MemberExpression).object as t.Identifier).name
+                : '';
             if (!storeIdentifiers.has(objectName)) continue;
             const namespacePath = this.parseNamespaceArgument(call.arguments[0], localVars);
             if (!namespacePath || namespacePath.length === 0) continue;
@@ -292,7 +298,7 @@ export class StoreParser {
         return { imports, localVars, storeIdentifiers, exportedStoreObject, dynamicRegistrations };
     }
 
-    private parseNamespaceArgument(node: any, localVars: Record<string, any>): string[] | null {
+    private parseNamespaceArgument(node: t.Node, localVars: Record<string, t.Node | null | undefined>): string[] | null {
         const resolved = this.resolveNode(node, localVars, 0, new Set());
         if (!resolved) return null;
 
@@ -318,7 +324,7 @@ export class StoreParser {
         return null;
     }
 
-    private extractStoreObject(node: any, localVars: Record<string, any>): any | null {
+    private extractStoreObject(node: t.Node, localVars: Record<string, t.Node | null | undefined>): t.Node | null {
         const resolvedNode = this.resolveNode(node, localVars, 0, new Set());
         if (!resolvedNode) return null;
 
@@ -349,9 +355,9 @@ export class StoreParser {
         return null;
     }
 
-    private looksLikeStoreObject(objExpression: any): boolean {
+    private looksLikeStoreObject(objExpression: t.Node): boolean {
         const keys = new Set<string>();
-        objExpression.properties.forEach((prop: any) => {
+        (objExpression as t.ObjectExpression).properties.forEach((prop) => {
             const key = this.getPropertyKeyName(prop, {});
             if (key) keys.add(key);
         });
@@ -359,7 +365,7 @@ export class StoreParser {
         return ['state', 'getters', 'mutations', 'actions', 'modules', 'namespaced'].some((k) => keys.has(k));
     }
 
-    private resolveNode(node: any, localVars: Record<string, any>, depth: number, seen: Set<string>): any {
+    private resolveNode(node: t.Node | null | undefined, localVars: Record<string, t.Node | null | undefined>, depth: number, seen: Set<string>): t.Node | null | undefined {
         if (!node || depth > 12) return node;
 
         if (node.type === 'Identifier') {
@@ -381,8 +387,8 @@ export class StoreParser {
             return this.resolveNode(node.argument, localVars, depth + 1, seen);
         }
 
-        if (node.type === 'ChainExpression') {
-            return this.resolveNode(node.expression, localVars, depth + 1, seen);
+        if (node.type === 'OptionalCallExpression' || node.type === 'OptionalMemberExpression') {
+            return node; // Babel 使用 Optional* 而非 ESTree 的 ChainExpression
         }
 
         if (node.type === 'CallExpression' && node.callee.type === 'Identifier') {
@@ -408,19 +414,22 @@ export class StoreParser {
     }
 
     private resolveFunctionReturnValue(
-        fnNode: any,
-        localVars: Record<string, any>,
+        fnNode: t.Node | null | undefined,
+        localVars: Record<string, t.Node | null | undefined>,
         depth: number,
         seen: Set<string>
-    ): any {
+    ): t.Node | null | undefined {
         if (!fnNode) return null;
 
         if (fnNode.type === 'ArrowFunctionExpression' && fnNode.body && fnNode.body.type !== 'BlockStatement') {
             return this.resolveNode(fnNode.body, localVars, depth + 1, seen);
         }
 
-        const body = fnNode.body && fnNode.body.type === 'BlockStatement' ? fnNode.body.body : [];
-        for (const statement of body) {
+        const fnBody = 'body' in fnNode ? fnNode.body : undefined;
+        const blockBody = fnBody && typeof fnBody === 'object' && 'type' in (fnBody as t.Node)
+            && (fnBody as t.Node).type === 'BlockStatement'
+            ? ((fnBody as t.BlockStatement).body) : [];
+        for (const statement of blockBody) {
             if (statement.type === 'ReturnStatement' && statement.argument) {
                 return this.resolveNode(statement.argument, localVars, depth + 1, seen);
             }
@@ -429,18 +438,18 @@ export class StoreParser {
     }
 
     private async processStoreObject(
-        objExpression: any,
+        objExpression: t.Node,
         filePath: string,
         moduleNamespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
         context: ParseContext
     ): Promise<void> {
         const isNamespaced = this.readNamespacedFlag(objExpression, localVars);
         const assetNamespace = moduleNamespace.length > 0 && isNamespaced ? moduleNamespace : [];
 
-        for (const prop of objExpression.properties) {
+        for (const prop of (objExpression as t.ObjectExpression).properties) {
             if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
 
             const keyName = this.getPropertyKeyName(prop, localVars);
@@ -462,8 +471,8 @@ export class StoreParser {
         }
     }
 
-    private readNamespacedFlag(objExpression: any, localVars: Record<string, any>): boolean {
-        for (const prop of objExpression.properties) {
+    private readNamespacedFlag(objExpression: t.Node, localVars: Record<string, t.Node | null | undefined>): boolean {
+        for (const prop of (objExpression as t.ObjectExpression).properties) {
             if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
 
             const keyName = this.getPropertyKeyName(prop, localVars);
@@ -478,16 +487,20 @@ export class StoreParser {
         return false;
     }
 
-    private getPropertyValueNode(prop: any, localVars: Record<string, any>): any {
+    private getPropertyValueNode(prop: ObjectMember, localVars: Record<string, t.Node | null | undefined>): t.Node | null | undefined {
         if (prop.type === 'ObjectMethod') {
             return prop;
+        }
+        if (prop.type === 'SpreadElement') {
+            return prop.argument;
         }
 
         if (!prop.value) return prop.value;
         return this.resolveNode(prop.value, localVars, 0, new Set());
     }
 
-    private getPropertyKeyName(prop: any, localVars: Record<string, any>): string | null {
+    private getPropertyKeyName(prop: ObjectMember, localVars: Record<string, t.Node | null | undefined>): string | null {
+        if (prop.type === 'SpreadElement') return null;
         const key = prop.key;
         if (!key) return null;
 
@@ -519,13 +532,16 @@ export class StoreParser {
         return null;
     }
 
-    private getPropertyLocation(prop: any): any {
+    private getPropertyLocation(prop: ObjectMember): t.SourceLocation | null {
+        if (prop.type === 'SpreadElement') {
+            return prop.loc ?? null;
+        }
         if (prop.key && prop.key.loc) return prop.key.loc;
         if (prop.loc) return prop.loc;
         return null;
     }
 
-    private processState(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+    private processState(valueNode: t.Node | null | undefined, filePath: string, namespace: string[], localVars: Record<string, t.Node | null | undefined>): void {
         if (!valueNode) return;
 
         const resolvedValueNode = this.resolveNode(valueNode, localVars, 0, new Set());
@@ -535,7 +551,7 @@ export class StoreParser {
             if (resolvedValueNode.body.type === 'ObjectExpression') {
                 stateObj = resolvedValueNode.body;
             } else if (resolvedValueNode.body.type === 'BlockStatement') {
-                const returnStmt = resolvedValueNode.body.body.find((statement: any) => statement.type === 'ReturnStatement');
+                const returnStmt = (resolvedValueNode as t.ArrowFunctionExpression & { body: t.BlockStatement }).body.body.find((statement: t.Node) => statement.type === 'ReturnStatement');
                 if (returnStmt && returnStmt.argument) {
                     stateObj = this.resolveNode(returnStmt.argument, localVars, 0, new Set());
                 }
@@ -547,15 +563,15 @@ export class StoreParser {
     }
 
     private collectStateProperties(
-        stateObj: any,
+        stateObj: t.Node,
         filePath: string,
         moduleNamespace: string[],
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         nestedPath: string[]
     ): void {
         if (!stateObj || stateObj.type !== 'ObjectExpression') return;
 
-        stateObj.properties.forEach((property: any) => {
+        (stateObj as t.ObjectExpression).properties.forEach((property) => {
             if (property.type !== 'ObjectProperty') return;
 
             const keyName = this.getPropertyKeyName(property, localVars);
@@ -587,14 +603,14 @@ export class StoreParser {
         });
     }
 
-    private inferType(node: any): string | undefined {
+    private inferType(node: t.Node | null | undefined): string | undefined {
         if (!node) return undefined;
 
         if (node.type === 'StringLiteral') return 'string';
         if (node.type === 'NumericLiteral') return 'number';
         if (node.type === 'BooleanLiteral') return 'boolean';
         if (node.type === 'NullLiteral') return 'null';
-        if (node.type === 'ArrayExpression') return 'Array<any>';
+        if (node.type === 'ArrayExpression') return 'Array<unknown>';
         if (node.type === 'ObjectExpression') return 'Object';
         if (node.type === 'NewExpression' && node.callee.type === 'Identifier') {
             return node.callee.name;
@@ -604,23 +620,23 @@ export class StoreParser {
         return undefined;
     }
 
-    private processGetters(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+    private processGetters(valueNode: t.Node | null | undefined, filePath: string, namespace: string[], localVars: Record<string, t.Node | null | undefined>): void {
         this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.getters);
     }
 
-    private processMutations(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+    private processMutations(valueNode: t.Node | null | undefined, filePath: string, namespace: string[], localVars: Record<string, t.Node | null | undefined>): void {
         this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.mutations);
     }
 
-    private processActions(valueNode: any, filePath: string, namespace: string[], localVars: Record<string, any>): void {
+    private processActions(valueNode: t.Node | null | undefined, filePath: string, namespace: string[], localVars: Record<string, t.Node | null | undefined>): void {
         this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.actions);
     }
 
     private processFunctionCollection(
-        valueNode: any,
+        valueNode: t.Node | null | undefined,
         filePath: string,
         namespace: string[],
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         output: VuexGetterInfo[] | VuexMutationInfo[] | VuexActionInfo[]
     ): void {
         if (!valueNode) return;
@@ -628,7 +644,7 @@ export class StoreParser {
         const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
         if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
 
-        resolvedValue.properties.forEach((property: any) => {
+        (resolvedValue as t.ObjectExpression).properties.forEach((property) => {
             if (property.type !== 'ObjectProperty' && property.type !== 'ObjectMethod') return;
 
             const keyName = this.getPropertyKeyName(property, localVars);
@@ -648,11 +664,11 @@ export class StoreParser {
     }
 
     private async processModules(
-        valueNode: any,
+        valueNode: t.Node | null | undefined,
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
         context: ParseContext
     ): Promise<void> {
@@ -665,11 +681,11 @@ export class StoreParser {
     }
 
     private async processModulesObjectExpression(
-        modulesObject: any,
+        modulesObject: t.Node,
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
         context: ParseContext
     ): Promise<void> {
@@ -695,11 +711,11 @@ export class StoreParser {
     }
 
     private async processModuleReference(
-        moduleNode: any,
+        moduleNode: t.Node,
         filePath: string,
         namespace: string[],
         imports: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
         context: ParseContext
     ): Promise<void> {
@@ -733,7 +749,7 @@ export class StoreParser {
         }
     }
 
-    private async resolveModulePathFromNode(node: any, localVars: Record<string, any>, filePath: string): Promise<string | null> {
+    private async resolveModulePathFromNode(node: t.Node, localVars: Record<string, t.Node | null | undefined>, filePath: string): Promise<string | null> {
         const resolvedNode = this.resolveNode(node, localVars, 0, new Set());
         if (!resolvedNode) return null;
 
@@ -770,7 +786,7 @@ export class StoreParser {
     private async resolveImportedModulePath(
         identifier: string,
         imports: Record<string, string>,
-        localVars: Record<string, any>,
+        localVars: Record<string, t.Node | null | undefined>,
         filePath: string
     ): Promise<string | null> {
         if (imports[identifier]) {
@@ -877,18 +893,18 @@ export class StoreParser {
         return reachable;
     }
 
-    private extractDocumentation(node: any): string | undefined {
+    private extractDocumentation(node: t.Node): string | undefined {
         if (!(node.leadingComments && Array.isArray(node.leadingComments) && node.leadingComments.length > 0)) {
             return undefined;
         }
 
-        const jsDocComments = node.leadingComments.filter((comment: any) =>
+        const jsDocComments = node.leadingComments.filter((comment) =>
             comment.type === 'CommentBlock' && comment.value.startsWith('*')
         );
 
         if (jsDocComments.length === 0) return undefined;
 
-        return jsDocComments.map((comment: any) => {
+        return jsDocComments.map((comment) => {
             let value = comment.value;
             value = value.substring(1).trim();
 

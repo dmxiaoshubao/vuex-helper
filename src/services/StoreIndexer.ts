@@ -10,8 +10,8 @@ export interface IndexOptions {
     forceFull?: boolean;
 }
 
-type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
-type VuexAnyItem = VuexStateInfo | VuexGetterInfo | VuexMutationInfo | VuexActionInfo;
+export type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
+export type VuexAnyItem = VuexStateInfo | VuexGetterInfo | VuexMutationInfo | VuexActionInfo;
 
 export class StoreIndexer {
     private workspaceRoot: string;
@@ -77,7 +77,7 @@ export class StoreIndexer {
         const forceFull = options.forceFull === true;
         const normalizedChangedFiles = (options.changedFiles || []).map((filePath) => vscode.Uri.file(filePath).fsPath);
         const shouldRefreshEntry = forceFull || this.shouldRefreshEntry(normalizedChangedFiles);
-        if (shouldRefreshEntry && typeof (this.entryAnalyzer as any).invalidateCache === 'function') {
+        if (shouldRefreshEntry && 'invalidateCache' in this.entryAnalyzer) {
             this.entryAnalyzer.invalidateCache();
         }
 
@@ -215,7 +215,7 @@ export class StoreIndexer {
         if (byIndex) return byIndex;
 
         const namespaceStr = namespace || '';
-        return this.getItemsByType(type).find((item: any) => item.name === name && item.modulePath.join('/') === namespaceStr);
+        return this.getItemsByType(type).find((item) => item.name === name && item.modulePath.join('/') === namespaceStr);
     }
 
     public getIndexedItemByFullPath(type: VuexItemType, fullPath: string): VuexAnyItem | undefined {
@@ -225,7 +225,7 @@ export class StoreIndexer {
         const parts = fullPath.split('/');
         const itemName = parts.pop() || '';
         const namespace = parts.join('/');
-        return this.getItemsByType(type).find((item: any) => item.name === itemName && item.modulePath.join('/') === namespace);
+        return this.getItemsByType(type).find((item) => item.name === itemName && item.modulePath.join('/') === namespace);
     }
 
     public getItemsByType(type: VuexItemType): VuexAnyItem[] {
@@ -240,7 +240,7 @@ export class StoreIndexer {
     public getItemsByTypeAndNamespace(type: VuexItemType, namespace: string): VuexAnyItem[] {
         const byIndex = this.itemIndexByTypeNamespace.get(this.makeTypeNamespaceKey(type, namespace));
         if (byIndex && byIndex.length > 0) return byIndex;
-        return this.getItemsByType(type).filter((item: any) => item.modulePath.join('/') === namespace);
+        return this.getItemsByType(type).filter((item) => item.modulePath.join('/') === namespace);
     }
 
     public getModuleDefinition(namespace: string): vscode.Location | undefined {
@@ -253,7 +253,7 @@ export class StoreIndexer {
             ...this.getItemsByType('mutation'),
             ...this.getItemsByType('action'),
         ];
-        const moduleItem = allItems.find((item: any) => item.modulePath.join('/') === namespace);
+        const moduleItem = allItems.find((item) => item.modulePath.join('/') === namespace);
         return moduleItem?.defLocation;
     }
 
@@ -269,7 +269,7 @@ export class StoreIndexer {
             ...this.getItemsByType('mutation'),
             ...this.getItemsByType('action'),
         ];
-        for (const item of allItems as any[]) {
+        for (const item of allItems) {
             const ns = item.modulePath.join('/');
             if (ns) names.add(ns);
         }

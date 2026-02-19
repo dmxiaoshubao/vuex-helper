@@ -1,4 +1,5 @@
 import { StoreIndexer } from './StoreIndexer';
+import { VuexAnyItem } from './StoreIndexer';
 import { buildLookupCandidates, VuexItemType } from '../utils/VuexProviderUtils';
 
 type ProviderItemType = 'state' | 'getter' | 'mutation' | 'action';
@@ -15,7 +16,7 @@ interface FindItemOptions {
 export class VuexLookupService {
     constructor(private readonly storeIndexer: StoreIndexer) {}
 
-    public findItem(options: FindItemOptions): any | undefined {
+    public findItem(options: FindItemOptions): VuexAnyItem | undefined {
         const lookups = buildLookupCandidates(
             options.name,
             options.type,
@@ -44,7 +45,7 @@ export class VuexLookupService {
         currentNamespace?: string[],
         preferLocal: boolean = true,
         allowRootFallback: boolean = false
-    ): any | undefined {
+    ): VuexAnyItem | undefined {
         const typed = this.toItemType(type);
         if (!typed) return undefined;
 
@@ -68,7 +69,7 @@ export class VuexLookupService {
             if (byPath) return byPath;
         }
 
-        const allItems = this.storeIndexer.getItemsByType(typed) as any[];
+        const allItems = this.storeIndexer.getItemsByType(typed);
         return allItems.find((item) => item.name === lookupName);
     }
 

@@ -10,15 +10,19 @@
     "ecmaVersion": 2022,
     "sourceType": "module"
   },
-  "plugins": [
-    "@typescript-eslint"
-  ],
-  "ignorePatterns": [
-    "out/**",
-    "dist/**"
-  ],
+  "plugins": ["@typescript-eslint"],
+  "ignorePatterns": ["out/**", "dist/**"],
   "rules": {
     "no-unreachable": "error",
-    "no-unsafe-finally": "error"
+    "no-unsafe-finally": "error",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      { "argsIgnorePattern": "^_" }
+    ],
+    "no-constant-condition": "error",
+    "eqeqeq": ["error", "always"],
+    "no-var": "error",
+    "prefer-const": "warn"
   }
 }

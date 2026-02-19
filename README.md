@@ -63,7 +63,7 @@ Also supports code completion, jump to definition, and hover information within 
 
 You can configure the extension via `.vscode/settings.json` or `package.json`:
 
-- `vuexHelper.storeEntry` (default: `src/store/index.js`): Path to your Vuex store entry file. Supports aliases like `@/store/index.js` or relative paths.
+- `vuexHelper.storeEntry` (default: empty, auto-detect): Path to your Vuex store entry file. Supports aliases like `@/store/index.js` or relative paths. When left empty, the extension will automatically try to detect your store entry file.
 
 ## Supported Syntax
 
@@ -91,29 +91,29 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 
 ## Feature Coverage
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `mapState` — array syntax | ✅ | `...mapState(['count'])` |
-| `mapState` — object string alias | ✅ | `...mapState({ alias: 'count' })` |
-| `mapState` — arrow function | ✅ | `...mapState({ c: state => state.count })` |
-| `mapState` — regular function | ✅ | `...mapState({ c(state) { return state.count } })` |
-| `mapState` — namespaced | ✅ | `...mapState('user', [...])` |
-| `mapGetters` — array / object | ✅ | |
-| `mapMutations` — array / object | ✅ | |
-| `mapActions` — array / object | ✅ | |
-| `this.$store.state/getters/commit/dispatch` | ✅ | Dot and bracket notation |
-| `createNamespacedHelpers` | ✅ | |
-| Object-style commit | ✅ | `commit({ type: 'inc' })` |
-| `state` as function | ✅ | `state: () => ({})` |
-| Nested state | ✅ | Recursive parsing |
-| Computed property keys | ✅ | `[SOME_MUTATION](state) {}` |
-| Dynamic module import/require | ✅ | ES Module & CommonJS |
-| Namespaced modules | ✅ | Including nested |
-| `this` alias completion | ✅ | `const _t = this; _t.` |
-| `{ root: true }` namespace switch | ✅ | commit/dispatch with root option |
-| State chain intermediate jump | ✅ | Click `user` in `state.user.name` |
-| Vue 2 project detection | ✅ | Silent deactivation for non-Vuex projects |
-| `rootState` / `rootGetters` | ✅ | Full support for completion, definition, and hover |
+| Feature                                     | Status | Notes                                              |
+| ------------------------------------------- | ------ | -------------------------------------------------- |
+| `mapState` — array syntax                   | ✅     | `...mapState(['count'])`                           |
+| `mapState` — object string alias            | ✅     | `...mapState({ alias: 'count' })`                  |
+| `mapState` — arrow function                 | ✅     | `...mapState({ c: state => state.count })`         |
+| `mapState` — regular function               | ✅     | `...mapState({ c(state) { return state.count } })` |
+| `mapState` — namespaced                     | ✅     | `...mapState('user', [...])`                       |
+| `mapGetters` — array / object               | ✅     |                                                    |
+| `mapMutations` — array / object             | ✅     |                                                    |
+| `mapActions` — array / object               | ✅     |                                                    |
+| `this.$store.state/getters/commit/dispatch` | ✅     | Dot and bracket notation                           |
+| `createNamespacedHelpers`                   | ✅     |                                                    |
+| Object-style commit                         | ✅     | `commit({ type: 'inc' })`                          |
+| `state` as function                         | ✅     | `state: () => ({})`                                |
+| Nested state                                | ✅     | Recursive parsing                                  |
+| Computed property keys                      | ✅     | `[SOME_MUTATION](state) {}`                        |
+| Dynamic module import/require               | ✅     | ES Module & CommonJS                               |
+| Namespaced modules                          | ✅     | Including nested                                   |
+| `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
+| `{ root: true }` namespace switch           | ✅     | commit/dispatch with root option                   |
+| State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
+| Vue 2 project detection                     | ✅     | Silent deactivation for non-Vuex projects          |
+| `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
 
 ## Release Notes
 
