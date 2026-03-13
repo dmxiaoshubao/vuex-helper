@@ -16,14 +16,14 @@ describe('hasVuexDependency', () => {
         assert.strictEqual(result, false);
     });
 
-    it('should return true when package.json does not exist (conservative)', async () => {
+    it('should return false when package.json does not exist', async () => {
         const result = await hasVuexDependency(path.join(fixturesDir, 'nonexistent-dir'));
-        assert.strictEqual(result, true);
+        assert.strictEqual(result, false);
     });
 
-    it('should return true for simple-project with vuex', async () => {
+    it('should return false for simple-project without package.json', async () => {
         const result = await hasVuexDependency(path.join(fixturesDir, 'simple-project'));
-        // simple-project 没有 package.json，应返回 true（保守策略）
-        assert.strictEqual(result, true);
+        // simple-project 没有 package.json，非 Node.js 项目，应返回 false
+        assert.strictEqual(result, false);
     });
 });

@@ -10,17 +10,24 @@ import { ComponentMapper } from './services/ComponentMapper';
 
 /**
  * 检查项目 package.json 中是否有 vuex 依赖。
- * 无 package.json 或解析失败时返回 true（保守策略，避免漏掉合法项目）。
+ * 无 package.json 时返回 false（没有 package.json 说明不是 Node.js 项目）。
+ * 文件存在但解析失败时返回 true（保守策略，避免漏掉合法项目）。
  */
 export async function hasVuexDependency(workspaceRoot: string): Promise<boolean> {
     const pkgPath = path.join(workspaceRoot, 'package.json');
+    try {
+        await fs.promises.access(pkgPath);
+    } catch {
+        // package.json 不存在，非 Node.js 项目
+        return false;
+    }
     try {
         const content = await fs.promises.readFile(pkgPath, 'utf-8');
         const pkg = JSON.parse(content);
         const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
         return !!allDeps['vuex'];
     } catch {
-        // 文件不存在或解析失败，保守返回 true
+        // 文件存在但读取或解析失败，保守返回 true
         return true;
     }
 }
