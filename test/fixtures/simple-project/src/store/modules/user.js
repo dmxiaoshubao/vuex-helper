@@ -120,10 +120,32 @@ const actions = {
 
     // [RG.5] rootGetters['xxx'] 另一个命名空间 — others 模块的 getter
     rootGetters["others/isDarkMode"]; // <- 光标放引号内
-
     // Commit root mutation
     commit("increment", null, { root: true });
     commit("toggleActive", null, { root: false });
+  },
+  /**
+   * [DIAG.user.1] 裸 commit 在 store action 上下文中仍应按 Vuex 处理
+   */
+  addItem({ commit }) {
+    commit("ADD_ROLE", "tester");
+  },
+  /**
+   * [DIAG.user.2] 局部同名变量不应污染 parser，也不应触发错误诊断
+   */
+  inspectShadowedLocals() {
+    const state = { tmp: 1 };
+    const getters = { tempGetter: () => true };
+    const mutations = { TEMP_MUTATION: () => undefined };
+    const actions = { tempAction: () => Promise.resolve() };
+    const modules = { tempModule: { enabled: true } };
+    return (
+      state.tmp ||
+      getters.tempGetter() ||
+      mutations.TEMP_MUTATION() ||
+      actions.tempAction() ||
+      modules.tempModule.enabled
+    );
   },
   /**
    * Example of dispatching root action

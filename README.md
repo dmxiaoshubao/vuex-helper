@@ -134,7 +134,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
 | `{ root: true }` namespace switch           | ✅     | commit/dispatch with root option                   |
 | State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
-| Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency |
+| Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency and `vuexHelper.storeEntry` is unset |
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
 | Diagnostics for invalid store references    | ✅     | Warning on non-existent state/getter/mutation/action, including store-file `state.xxx` |
 | Manual reindex command                      | ✅     | `vuexHelper.reindex` via Command Palette           |
@@ -149,7 +149,9 @@ Diagnostics and reindex command release:
 - **Added**: Manual reindex command (`vuexHelper.reindex`) accessible from the Command Palette.
 - **Added**: Store-file diagnostic coverage for `state`, `rootState`, and `rootGetters` references.
 - **Improved**: Diagnostics now refresh after initial indexing, manual reindex, file saves, and document open/close events.
-- **Improved**: Activation is skipped when the workspace has no `package.json`, avoiding false activation in standalone `.vue` directories.
+- **Fixed**: Reduced diagnostics false positives for helper callback string literals, non-Vuex local `dispatch` / `commit` functions, and shadowed local `state` variables in store files.
+- **Fixed**: Store parsing now ignores nested-scope shadowing for `state` / `getters` / `mutations` / `actions` / `modules`, preventing local declarations from polluting module indexes.
+- **Improved**: Activation is skipped when the workspace has no `package.json`, unless `vuexHelper.storeEntry` is configured, avoiding false activation while preserving manual setup.
 
 ### 1.0.0
 

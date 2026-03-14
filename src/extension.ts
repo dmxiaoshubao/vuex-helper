@@ -34,6 +34,19 @@ export async function hasVuexDependency(workspaceRoot: string): Promise<boolean>
     }
 }
 
+export function hasConfiguredStoreEntry(workspaceRoot: string): boolean {
+    const config = vscode.workspace.getConfiguration('vuexHelper', vscode.Uri.file(workspaceRoot));
+    const configuredEntry = config.get<string>('storeEntry');
+    return typeof configuredEntry === 'string' && configuredEntry.trim() !== '';
+}
+
+export async function shouldActivateWorkspace(workspaceRoot: string): Promise<boolean> {
+    if (await hasVuexDependency(workspaceRoot)) {
+        return true;
+    }
+    return hasConfiguredStoreEntry(workspaceRoot);
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders) {
@@ -42,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
     // 检查项目是否使用 vuex，非 vuex 项目静默退出
-    if (!await hasVuexDependency(workspaceRoot)) {
+    if (!await shouldActivateWorkspace(workspaceRoot)) {
         return;
     }
 

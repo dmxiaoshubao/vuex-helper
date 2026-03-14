@@ -40,4 +40,42 @@ describe('Vuex Store Analysis', () => {
         assert.ok(setNameMutation, 'Should find "user/SET_NAME" mutation');
     });
 
+    it('should ignore nested scope shadowing when indexing module assets', async () => {
+        const indexer = new StoreIndexer(fixtureRoot);
+        await indexer.index();
+
+        const storeMap = indexer.getStoreMap();
+        assert.ok(storeMap, 'Store map should be generated');
+
+        const userStates = storeMap!.state
+            .filter((item) => item.modulePath.join('/') === 'user')
+            .map((item) => item.name)
+            .sort();
+        assert.deepStrictEqual(userStates, ['age', 'isActive', 'name', 'roles']);
+
+        const userGetters = storeMap!.getters
+            .filter((item) => item.modulePath.join('/') === 'user')
+            .map((item) => item.name)
+            .sort();
+        assert.deepStrictEqual(userGetters, ['hasRole', 'isAdmin', 'nameWithCount', 'upperName', 'userAge']);
+
+        const userMutations = storeMap!.mutations
+            .filter((item) => item.modulePath.join('/') === 'user')
+            .map((item) => item.name)
+            .sort();
+        assert.deepStrictEqual(userMutations, ['ADD_ROLE', 'SET_AGE', 'SET_NAME', 'SET_PROFILE', 'testName', 'toggleActive']);
+
+        const userActions = storeMap!.actions
+            .filter((item) => item.modulePath.join('/') === 'user')
+            .map((item) => item.name)
+            .sort();
+        assert.deepStrictEqual(userActions, ['accessRootState', 'addItem', 'callRootAction', 'fetchProfile', 'inspectShadowedLocals', 'logout', 'updateInfoAsync', 'updateName']);
+
+        assert.ok(!storeMap!.state.some((item) => item.name === 'tmp' && item.modulePath.join('/') === 'user'));
+        assert.ok(!storeMap!.getters.some((item) => item.name === 'tempGetter' && item.modulePath.join('/') === 'user'));
+        assert.ok(!storeMap!.mutations.some((item) => item.name === 'TEMP_MUTATION' && item.modulePath.join('/') === 'user'));
+        assert.ok(!storeMap!.actions.some((item) => item.name === 'tempAction' && item.modulePath.join('/') === 'user'));
+        assert.ok(indexer.getNamespace(path.join(fixtureRoot, 'src/store/modules/user.js'))?.join('/') === 'user');
+    });
+
 });

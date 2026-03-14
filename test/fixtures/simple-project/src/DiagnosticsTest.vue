@@ -27,6 +27,12 @@ export default {
     ...mapState({ myCount: "count" }),
     // [WARN] 对象语法 value 无效
     ...mapState({ alias: "badState" }),
+    // [OK]  函数体中的普通字符串不是 Vuex key，不应报警
+    ...mapState({
+      themeLabel(state) {
+        return state.count > 0 ? "dark" : "light";
+      },
+    }),
 
     // ---- 15.2 mapGetters ----
     // [OK]  根模块有效 getter
@@ -132,6 +138,20 @@ export default {
       this.$store?.dispatch("others/badAction");
       const a = this;
       a.$store?.dispatch("others/badAction");
+    },
+
+    // ---- 15.11 非 Vuex 同名函数不触发诊断 ----
+    localFunctionTests() {
+      function dispatch(type) {
+        return type;
+      }
+      function commit(type) {
+        return type;
+      }
+
+      // [OK]  普通局部函数，不是 Vuex dispatch/commit
+      dispatch("local-event");
+      commit("local-mutation");
     },
 
     // ---- 15.10 注释行不触发诊断 ----

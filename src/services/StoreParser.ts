@@ -162,6 +162,7 @@ export class StoreParser {
         let exportDefaultCandidate: t.Node | null = null;
         let moduleExportsCandidate: t.Node | null = null;
         let newExpressionCandidate: t.Node | null = null;
+        const isTopLevelDeclaration = (path: NodePath<any>) => path.parentPath?.isProgram() === true;
 
         traverse(ast, {
             ImportDeclaration: (path: NodePath<t.ImportDeclaration>) => {
@@ -173,11 +174,13 @@ export class StoreParser {
                 });
             },
             FunctionDeclaration: (path: NodePath<t.FunctionDeclaration>) => {
+                if (!isTopLevelDeclaration(path)) return;
                 if (path.node.id && path.node.id.name) {
                     localVars[path.node.id.name] = path.node;
                 }
             },
             VariableDeclarator: (path: NodePath<t.VariableDeclarator>) => {
+                if (!path.parentPath?.parentPath?.isProgram()) return;
                 if (path.node.id.type === 'Identifier') {
                     localVars[path.node.id.name] = path.node.init;
                 }

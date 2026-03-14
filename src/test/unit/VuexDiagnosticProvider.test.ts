@@ -132,6 +132,24 @@ export default {
         assert.ok(diags.some(d => d.message.includes('noSuchAction')), 'Expected warning for noSuchAction');
     });
 
+    it('should not warn for string literals inside mapState function bodies', () => {
+        const doc = createDocument(`<template></template>
+<script>
+import { mapState } from 'vuex';
+export default {
+  computed: {
+    ...mapState({
+      themeLabel(state) {
+        return state.count > 0 ? 'dark' : 'light';
+      }
+    })
+  }
+}
+</script>`);
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
     it('should warn for all invalid items in a mapMutations array', () => {
         const doc = createDocument(`<template></template>
 <script>
@@ -192,6 +210,16 @@ export default {
     doIt() { this.$store.dispatch('cart/addToCart'); }
   }
 }`, '/mock/workspace/src/App.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for non-Vuex bare dispatch call in non-store file', () => {
+        const doc = createDocument(`function dispatch(type) {
+  console.log(type);
+}
+
+dispatch('local-event');`, '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
@@ -392,5 +420,26 @@ export default {
             '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.strictEqual(diags.length, 0, 'Non-store file should not scan internal state');
+    });
+
+    it('should not warn for shadowed local state variable in store file', () => {
+        const doc = createDocument(`function helper() {
+  const state = { tmp: 1 };
+  return state.tmp;
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for valid bare commit in store action context', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    addItem({ commit }) {
+      commit('ADD_ITEM');
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
 });

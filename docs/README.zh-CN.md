@@ -126,7 +126,7 @@
 | `this` 别名补全                             | ✅   | `const _t = this; _t.`                             |
 | `{ root: true }` 命名空间切换               | ✅   | commit/dispatch 的 root 选项                       |
 | State 链式路径中间词跳转                    | ✅   | 点击 `state.user.name` 中的 `user`                 |
-| Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖时静默不激活 |
+| Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖且未配置 `vuexHelper.storeEntry` 时静默不激活 |
 | `rootState` / `rootGetters`                 | ✅   | 完整支持补全、跳转和悬浮提示                       |
 | 无效 Store 引用诊断                         | ✅   | 不存在的 state/getter/mutation/action 以 Warning 标记，含 store 文件 `state.xxx` |
 | 手动重索引命令                               | ✅   | 命令面板执行 `vuexHelper.reindex`                  |
@@ -156,7 +156,9 @@
 - **新增**: 手动重索引命令 `vuexHelper.reindex`，可通过命令面板触发全量重索引。
 - **新增**: 覆盖 store 文件内 `state`、`rootState`、`rootGetters` 引用的诊断。
 - **优化**: 诊断会在初始化索引、手动重索引、保存文件以及文档打开/关闭后及时刷新。
-- **优化**: 当工作区不存在 `package.json` 时不再激活，避免仅含独立 `.vue` 文件的目录被误判激活。
+- **修复**: 降低 diagnostics 误报，覆盖 helper 回调中的普通字符串、非 Vuex 的局部 `dispatch` / `commit` 函数，以及 store 文件中被局部变量遮蔽的 `state`。
+- **修复**: Store 解析阶段忽略嵌套作用域里对 `state` / `getters` / `mutations` / `actions` / `modules` 的同名遮蔽，避免局部声明污染模块索引。
+- **优化**: 当工作区不存在 `package.json` 时默认不激活；若已配置 `vuexHelper.storeEntry` 仍可激活，兼顾误判规避与手动配置场景。
 
 ### 1.0.0
 

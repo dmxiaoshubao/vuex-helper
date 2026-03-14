@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as parser from '@babel/parser';
+import traverse from '@babel/traverse';
+import type * as t from '@babel/types';
 import { StoreIndexer } from './StoreIndexer';
 import { VuexLookupService } from './VuexLookupService';
 
@@ -76,19 +79,41 @@ export class VuexDiagnosticProvider {
         const { content, offset: scriptOffset } = scriptText;
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
         const refs: DiagnosableRef[] = [];
+        const ast = this.parseScriptAst(content);
 
-        this.scanMapHelpers(content, scriptOffset, document, currentNamespace, refs);
-        this.scanCommitDispatch(content, scriptOffset, document, currentNamespace, refs);
+        if (ast) {
+            this.scanMapHelpersAst(ast, scriptOffset, document, currentNamespace, refs);
+            this.scanCommitDispatchAst(ast, scriptOffset, document, currentNamespace, refs);
+        } else {
+            this.scanMapHelpers(content, scriptOffset, document, currentNamespace, refs);
+            this.scanCommitDispatch(content, scriptOffset, document, currentNamespace, refs);
+        }
         this.scanStoreBracketAccess(content, scriptOffset, document, refs);
         this.scanStoreDotChain(content, scriptOffset, document, refs);
         this.scanRootStateGetters(content, scriptOffset, document, refs);
 
         // store 文件内部的裸 state.xxx 访问（mutation/getter/action 参数）
         if (currentNamespace) {
-            this.scanInternalStateAccess(content, scriptOffset, document, currentNamespace, refs);
+            if (ast) {
+                this.scanInternalStateAccessAst(ast, scriptOffset, document, currentNamespace, refs);
+            } else {
+                this.scanInternalStateAccess(content, scriptOffset, document, currentNamespace, refs);
+            }
         }
 
         return refs;
+    }
+
+    private parseScriptAst(content: string): t.File | null {
+        try {
+            return parser.parse(content, {
+                sourceType: 'module',
+                plugins: ['typescript', 'jsx'],
+                errorRecovery: true,
+            });
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -143,6 +168,71 @@ export class VuexDiagnosticProvider {
                 nsMatch ? nsMatch[0].length : 0,
             );
         }
+    }
+
+    private scanMapHelpersAst(
+        ast: t.File,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+        currentNamespace: string[] | undefined,
+        refs: DiagnosableRef[],
+    ): void {
+        traverse(ast, {
+            CallExpression: (path) => {
+                const callee = path.node.callee;
+                if (callee.type !== 'Identifier') return;
+
+                const type = HELPER_TYPE_MAP[callee.name];
+                if (!type) return;
+
+                const args = path.node.arguments;
+                let namespace: string | undefined;
+                let targetArgIndex = 0;
+
+                if (args[0]?.type === 'StringLiteral' && args[0].value) {
+                    namespace = args[0].value;
+                    targetArgIndex = 1;
+                }
+
+                const target = args[targetArgIndex];
+                if (!target) return;
+
+                if (target.type === 'ArrayExpression') {
+                    for (const element of target.elements) {
+                        if (!element || element.type !== 'StringLiteral' || !element.value) continue;
+                        this.pushStringRef(
+                            refs,
+                            element,
+                            element.value,
+                            type,
+                            namespace,
+                            currentNamespace,
+                            scriptOffset,
+                            document,
+                        );
+                    }
+                    return;
+                }
+
+                if (target.type !== 'ObjectExpression') return;
+
+                for (const prop of target.properties) {
+                    if (prop.type !== 'ObjectProperty') continue;
+                    if (prop.value.type !== 'StringLiteral' || !prop.value.value) continue;
+
+                    this.pushStringRef(
+                        refs,
+                        prop.value,
+                        prop.value.value,
+                        type,
+                        namespace,
+                        currentNamespace,
+                        scriptOffset,
+                        document,
+                    );
+                }
+            },
+        });
     }
 
     /**
@@ -215,6 +305,8 @@ export class VuexDiagnosticProvider {
             const value = match[3];
             if (!value) continue;
 
+            if (!this.isLikelyVuexMethodCall(content, match.index, currentNamespace)) continue;
+
             const type: 'mutation' | 'action' = method === 'commit' ? 'mutation' : 'action';
 
             // 跳过注释行
@@ -251,6 +343,59 @@ export class VuexDiagnosticProvider {
                 preferLocal, currentNamespace,
             });
         }
+    }
+
+    private scanCommitDispatchAst(
+        ast: t.File,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+        currentNamespace: string[] | undefined,
+        refs: DiagnosableRef[],
+    ): void {
+        const visitCall = (path: any) => {
+            const callee = path.node.callee;
+            let method: 'commit' | 'dispatch' | undefined;
+            let preferLocal = false;
+
+            if (callee.type === 'Identifier' && (callee.name === 'commit' || callee.name === 'dispatch')) {
+                if (currentNamespace === undefined) return;
+                const binding = path.scope.getBinding(callee.name);
+                if (!binding || binding.kind !== 'param') return;
+                method = callee.name;
+                preferLocal = true;
+            } else if (this.isStoreMethodCallee(callee)) {
+                method = (callee.property as t.Identifier).name as 'commit' | 'dispatch';
+                preferLocal = false;
+            }
+
+            if (!method) return;
+
+            const firstArg = path.node.arguments?.[0];
+            if (!firstArg || firstArg.type !== 'StringLiteral' || !firstArg.value) return;
+
+            const type: 'mutation' | 'action' = method === 'commit' ? 'mutation' : 'action';
+            let refName = firstArg.value;
+            let refNamespace: string | undefined;
+            if (refName.includes('/')) {
+                const parts = refName.split('/');
+                refName = parts.pop()!;
+                refNamespace = parts.join('/');
+            }
+
+            refs.push({
+                name: refName,
+                type,
+                namespace: refNamespace,
+                range: this.createStringLiteralRange(firstArg, scriptOffset, document),
+                preferLocal,
+                currentNamespace,
+            });
+        };
+
+        traverse(ast, {
+            CallExpression: visitCall,
+            OptionalCallExpression: visitCall,
+        } as any);
     }
 
     /**
@@ -449,6 +594,115 @@ export class VuexDiagnosticProvider {
                 currentNamespace, preferLocal: true,
             });
         }
+    }
+
+    private scanInternalStateAccessAst(
+        ast: t.File,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+        currentNamespace: string[],
+        refs: DiagnosableRef[],
+    ): void {
+        const visitMember = (path: any) => {
+            const node = path.node;
+            if (node.computed) return;
+            if (node.object.type !== 'Identifier' || node.object.name !== 'state') return;
+            if (node.property.type !== 'Identifier') return;
+
+            const binding = path.scope.getBinding('state');
+            if (!binding || binding.kind !== 'param') return;
+
+            refs.push({
+                name: node.property.name,
+                type: 'state',
+                range: this.createNodeRange(node.property, scriptOffset, document),
+                currentNamespace,
+                preferLocal: true,
+            });
+        };
+
+        traverse(ast, {
+            MemberExpression: visitMember,
+            OptionalMemberExpression: visitMember,
+        } as any);
+    }
+
+    private pushStringRef(
+        refs: DiagnosableRef[],
+        literal: t.StringLiteral,
+        rawValue: string,
+        type: 'state' | 'getter' | 'mutation' | 'action',
+        namespace: string | undefined,
+        currentNamespace: string[] | undefined,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+    ): void {
+        let refName = rawValue;
+        let refNamespace = namespace;
+        if (rawValue.includes('/')) {
+            const parts = rawValue.split('/');
+            refName = parts.pop()!;
+            const pathNs = parts.join('/');
+            refNamespace = refNamespace ? `${refNamespace}/${pathNs}` : pathNs;
+        }
+
+        refs.push({
+            name: refName,
+            type,
+            namespace: refNamespace,
+            range: this.createStringLiteralRange(literal, scriptOffset, document),
+            currentNamespace,
+        });
+    }
+
+    private createStringLiteralRange(
+        literal: t.StringLiteral,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+    ): vscode.Range {
+        const start = (literal.start ?? 0) + scriptOffset + 1;
+        const end = (literal.end ?? start) + scriptOffset - 1;
+        return new vscode.Range(document.positionAt(start), document.positionAt(end));
+    }
+
+    private createNodeRange(
+        node: { start?: number | null; end?: number | null },
+        scriptOffset: number,
+        document: vscode.TextDocument,
+    ): vscode.Range {
+        const start = (node.start ?? 0) + scriptOffset;
+        const end = (node.end ?? start) + scriptOffset;
+        return new vscode.Range(document.positionAt(start), document.positionAt(end));
+    }
+
+    private isStoreMethodCallee(callee: any): callee is t.MemberExpression | t.OptionalMemberExpression {
+        if (!callee || (callee.type !== 'MemberExpression' && callee.type !== 'OptionalMemberExpression')) {
+            return false;
+        }
+        if (callee.computed || callee.property.type !== 'Identifier') return false;
+        if (callee.property.name !== 'commit' && callee.property.name !== 'dispatch') return false;
+        return this.isDollarStoreAccess(callee.object);
+    }
+
+    private isDollarStoreAccess(node: any): boolean {
+        if (!node) return false;
+        if (node.type === 'Identifier') return node.name === '$store';
+        if (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') return false;
+        if (node.computed || node.property.type !== 'Identifier') return false;
+        if (node.property.name !== '$store') return false;
+        return node.object.type === 'ThisExpression';
+    }
+
+    private isLikelyVuexMethodCall(
+        content: string,
+        callIndex: number,
+        currentNamespace: string[] | undefined,
+    ): boolean {
+        const beforeCall = content.slice(Math.max(0, callIndex - 80), callIndex).trimEnd();
+        if (/\$store(?:\?\.)?\.$/.test(beforeCall)) return true;
+        if (/\bstore(?:\?\.)?\.$/.test(beforeCall)) return true;
+        if (/(?:\?\.|\.)$/.test(beforeCall)) return false;
+        return currentNamespace !== undefined;
     }
 
     /**

@@ -12,9 +12,16 @@ All notable changes to the "Vuex Helper" extension will be documented in this fi
 ### Improved
 
 - **Diagnostics lifecycle**: Refreshes diagnostics after initial indexing, reindex completion, non-store file saves, and document open/close events.
-- **Activation guard**: Skips activation when workspace `package.json` is missing, preventing false activation in directories that only contain a standalone `.vue` file.
+- **Activation guard**: Skips activation when workspace `package.json` is missing unless `vuexHelper.storeEntry` is configured, preventing false activation in standalone `.vue` directories while preserving manual setup.
 - **Code organization**: Reordered diagnostic definitions before scheduler creation in extension activation to eliminate temporal dead zone risk in closure captures.
+- **Host regression coverage**: Expanded real host assertions for diagnostics, module-scoped `commit` / `dispatch` completion, `rootState` / `rootGetters`, and mapped bracket-access navigation using the `simple-project` fixture.
 - **Test reliability**: Moved global mock state cleanup to `finally` blocks to prevent state leakage on test assertion failures.
+
+### Fixed
+
+- **Diagnostics false positives**: Avoided misreporting helper callback string literals, non-Vuex local `dispatch` / `commit` calls, and shadowed local `state` variables in store files.
+- **StoreParser scope handling**: Limited declaration collection to module-level scope so nested local `state` / `getters` / `mutations` / `actions` / `modules` variables no longer pollute indexed store assets.
+- **Host smoke fixture sync**: Updated the App.vue host performance anchor to match the current simple-project fixture.
 
 ## [1.0.0] - 2026-02-19
 
