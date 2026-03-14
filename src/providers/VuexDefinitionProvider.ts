@@ -190,6 +190,18 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
             // Note: extractStringLiteralPathAtPosition result is reused from earlier call
             const explicitPath = stringLiteralObj ? stringLiteralObj.path : undefined;
+
+            // mapState/mapGetters/mapMutations/mapActions('namespace', [...])
+            // 首参是独立 namespace 时，跳转到对应模块文件。
+            if (
+                context.method === 'mapHelper' &&
+                context.argumentIndex === 0 &&
+                context.isNested !== true &&
+                explicitPath
+            ) {
+                const moduleDef = this.findModuleDefinition(explicitPath);
+                if (moduleDef) return moduleDef;
+            }
             
             if (explicitPath && explicitPath.includes('/')) {
                 const parts = explicitPath.split('/');

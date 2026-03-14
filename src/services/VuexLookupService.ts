@@ -69,6 +69,10 @@ export class VuexLookupService {
             if (byPath) return byPath;
         }
 
+        if (lookupNamespace) {
+            return undefined;
+        }
+
         const allItems = this.storeIndexer.getItemsByType(typed);
         return allItems.find((item) => item.name === lookupName);
     }
@@ -81,4 +85,3 @@ export class VuexLookupService {
         return undefined;
     }
 }
-

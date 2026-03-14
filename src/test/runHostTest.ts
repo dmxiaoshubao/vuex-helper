@@ -6,6 +6,37 @@ import { runTests } from '@vscode/test-electron';
 type HostExtMode = 'isolated' | 'with-vue';
 type SupportedLangExtensionId = 'vue.volar' | 'octref.vetur';
 const DEFAULT_LANG_EXTENSION_PRIORITY: SupportedLangExtensionId[] = ['vue.volar', 'octref.vetur'];
+const DISABLED_BUILTIN_EXTENSIONS = ['vscode.typescript-language-features'];
+const HOST_LAUNCHER_ENV_KEYS_TO_CLEAR = [
+    'ELECTRON_RUN_AS_NODE',
+    'VSCODE_CLI',
+    'VSCODE_CODE_CACHE_PATH',
+    'VSCODE_CRASH_REPORTER_PROCESS_TYPE',
+    'VSCODE_CWD',
+    'VSCODE_ESM_ENTRYPOINT',
+    'VSCODE_HANDLES_UNCAUGHT_ERRORS',
+    'VSCODE_IPC_HOOK',
+    'VSCODE_NLS_CONFIG',
+    'VSCODE_PID'
+];
+
+function clearInheritedHostLauncherEnv(): () => void {
+    const previousValues = new Map<string, string | undefined>();
+    HOST_LAUNCHER_ENV_KEYS_TO_CLEAR.forEach((key) => {
+        previousValues.set(key, process.env[key]);
+        delete process.env[key];
+    });
+
+    return () => {
+        previousValues.forEach((value, key) => {
+            if (value === undefined) {
+                delete process.env[key];
+                return;
+            }
+            process.env[key] = value;
+        });
+    };
+}
 
 function resolveHostExtMode(): HostExtMode {
     const mode = (process.env.HOST_TEST_EXT_MODE || 'isolated').trim().toLowerCase();
@@ -116,6 +147,7 @@ function resolveInstalledVueExtensionDir(): { extensionDir: string; extensionId:
 
 async function main() {
     const tempDirs: string[] = [];
+    const restoreEnv = clearInheritedHostLauncherEnv();
     try {
         const extensionDevelopmentPath = path.resolve(__dirname, '../../');
         const extensionTestsPath = path.resolve(__dirname, './host/index');
@@ -125,6 +157,9 @@ async function main() {
 
         if (mode === 'isolated') {
             launchArgs.push('--disable-extensions');
+            DISABLED_BUILTIN_EXTENSIONS.forEach((extensionId) => {
+                launchArgs.push('--disable-extension', extensionId);
+            });
         } else {
             const langExtension = resolveInstalledVueExtensionDir();
             if (!langExtension) {
@@ -156,6 +191,7 @@ async function main() {
         console.error('Failed to run host integration tests');
         process.exit(1);
     } finally {
+        restoreEnv();
         for (const dir of tempDirs) {
             try {
                 fs.rmSync(dir, { recursive: true, force: true });

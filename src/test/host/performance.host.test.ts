@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 
 type CompletionResult = vscode.CompletionItem[] | vscode.CompletionList | undefined;
 type DefinitionResult = Array<vscode.Location | vscode.LocationLink> | undefined;
+let hostLanguageNoiseSuppressed: Promise<void> | undefined;
 
 function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,7 +124,36 @@ async function ensureExtensionActivated(): Promise<void> {
     }
 }
 
+async function suppressHostLanguageNoise(): Promise<void> {
+    if (!hostLanguageNoiseSuppressed) {
+        hostLanguageNoiseSuppressed = (async () => {
+            const updates: Array<[string | undefined, string, unknown]> = [
+                ['javascript', 'validate.enable', false],
+                ['typescript', 'validate.enable', false],
+                ['javascript', 'suggestionActions.enabled', false],
+                ['typescript', 'suggestionActions.enabled', false],
+                ['javascript', 'format.enable', false],
+                ['typescript', 'format.enable', false],
+            ];
+
+            for (const [section, key, value] of updates) {
+                const config = section ? vscode.workspace.getConfiguration(section) : vscode.workspace.getConfiguration();
+                await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+            }
+
+            try {
+                await vscode.commands.executeCommand('typescript.restartTsServer');
+            } catch {
+                // TS server may be unavailable in isolated mode before JS/TS docs are opened.
+            }
+        })();
+    }
+
+    await hostLanguageNoiseSuppressed;
+}
+
 async function openDocumentForProviders(filePath: string): Promise<vscode.TextDocument> {
+    await suppressHostLanguageNoise();
     let document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
     if (!['vue', 'javascript', 'typescript'].includes(document.languageId)) {
         // 在 --disable-extensions 场景下，.vue 可能退化为 plain text；切到 js 以触发 provider。
@@ -388,6 +418,40 @@ describe('Host Diagnostics', function () {
         cleanChecks.forEach((position) => {
             assert.ok(!hasAnyDiagnosticAtPosition(diagnostics, position), 'Unexpected diagnostic at clean position');
         });
+    });
+
+    it('should navigate nested plain root object leaf to root state definition', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+        const warmupFile = path.join(workspaceRoot, 'src/main.js');
+        const filePath = path.join(workspaceRoot, 'src/DiagnosticsTest.vue');
+
+        await openDocumentForProviders(warmupFile);
+        await ensureExtensionActivated();
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        await sleep(1000);
+
+        const document = await openDocumentForProviders(filePath);
+        const position = findPositionInAnchor(
+            document,
+            'const g5 = this.$store.state.preferences.theme;',
+            'theme',
+            1,
+            2,
+        );
+
+        const result = await vscode.commands.executeCommand<DefinitionResult>(
+            'vscode.executeDefinitionProvider',
+            document.uri,
+            position,
+        );
+        const definitions = normalizeDefinitionResults(result);
+
+        assert.ok(
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'index.js'))),
+            `Nested plain root object leaf should resolve to root store, got: ${definitions.map((item) => getDefinitionUri(item).fsPath).join(', ')}`
+        );
     });
 });
 

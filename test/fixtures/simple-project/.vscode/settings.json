@@ -1,3 +1,9 @@
 {
-  "less.suppressNotice": true
+  "less.suppressNotice": true,
+  "javascript.validate.enable": false,
+  "typescript.validate.enable": false,
+  "javascript.suggestionActions.enabled": false,
+  "typescript.suggestionActions.enabled": false,
+  "javascript.format.enable": false,
+  "typescript.format.enable": false
 }

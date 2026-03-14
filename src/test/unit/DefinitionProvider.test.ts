@@ -22,6 +22,8 @@ class MockStoreIndexer extends StoreIndexer {
         return {
             state: [
                 { name: 'name', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 0) },
+                { name: 'preferences', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 17), displayType: 'Object' },
+                { name: 'theme', modulePath: ['preferences'], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 18), displayType: 'string' },
                 { name: 'name', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 1) },
                 { name: 'language', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 3) },
                 { name: 'profile', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 10) },
@@ -589,6 +591,58 @@ describe('VuexDefinitionProvider namespace segment jump', () => {
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
     });
+
+    it('should jump to module file top when clicking mapGetters first namespace argument', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default { computed: { ...mapGetters('others', ['hasNotifications']) } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for mapGetters namespace first argument');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to module file top when clicking mapState first namespace argument', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapState } from 'vuex'\nexport default { computed: { ...mapState('others', ['language']) } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for mapState namespace first argument');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to module file top when clicking mapMutations first namespace argument', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapMutations } from 'vuex'\nexport default { methods: { ...mapMutations('others', ['SET_THEME']) } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for mapMutations namespace first argument');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
+
+    it('should jump to module file top when clicking mapActions first namespace argument', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapActions } from 'vuex'\nexport default { methods: { ...mapActions('others', ['changeTheme']) } }\n</script>`;
+        const line = text.split('\n')[2];
+        const char = line.indexOf('others') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 2, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for mapActions namespace first argument');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0, 'Should jump to file top for module');
+    });
 });
 
 describe('VuexDefinitionProvider $store.state chain access', () => {
@@ -616,6 +670,19 @@ describe('VuexDefinitionProvider $store.state chain access', () => {
         assert.ok(definition, 'Definition should be resolved for leaf state');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 3, 'Should jump to state definition line');
+    });
+
+    it('should jump to nested plain root object leaf instead of unrelated namespaced state', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<template></template>\n<script>\nexport default {\n  methods: {\n    init() {\n      this.$store.state.preferences.theme\n    },\n  }\n}\n</script>`;
+        const line = text.split('\n')[5];
+        const char = line.indexOf('theme') + 2;
+        const document = createDocument(text, '/mock/workspace/src/pages/index.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 5, character: char } as any, {} as any);
+        assert.ok(definition, 'Nested plain root object leaf should resolve to its root state definition');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 18, 'Should jump to root preferences.theme definition line');
     });
 });
 

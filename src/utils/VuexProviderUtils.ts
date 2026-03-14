@@ -252,7 +252,15 @@ export function resolveMappedItem(
     word: string
 ): VuexMappedInfo | undefined {
     const direct = mapping[word];
-    if (direct) return direct;
+    if (direct) {
+        const normalizedPrefix = rawPrefix.replace(/\?\./g, '.').trimEnd();
+        if (
+            !normalizedPrefix.endsWith('.') ||
+            /\b(?:this|vm)\.$/.test(normalizedPrefix)
+        ) {
+            return direct;
+        }
+    }
 
     const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
     if (!bracketMappedPathPrefix) return undefined;
