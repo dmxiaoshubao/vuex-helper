@@ -1,5 +1,7 @@
 # Vuex Helper (中文说明)
 
+只要是 Vuex 开发里你想要的辅助火力，这里都会尽量配齐：从发现、补全、跳转、查看到校验，一套工具把 Vuex 开发体验直接拉满。
+
 适用于 Vuex 2 的 VS Code 插件，提供 **跳转定义**、**代码补全**、**悬浮提示**、**诊断** 和手动重索引能力。支持 State, Getters, Mutations 和 Actions。
 
 ⭐ 如果这个插件对你有帮助，请在 [GitHub](https://github.com/dmxiaoshubao/vuex-helper) 上给个 Star，感谢您的支持！

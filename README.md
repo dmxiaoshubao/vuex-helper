@@ -2,6 +2,8 @@
 
 [中文文档](./docs/README.zh-CN.md)
 
+If you want Vuex firepower in VS Code, this extension is built to bring the full toolkit to one place: discover, complete, navigate, inspect, and validate your store workflow with confidence.
+
 VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, **Hover Information**, **Diagnostics**, and manual reindex support for State, Getters, Mutations, and Actions.
 
 ⭐ If you find this extension helpful, please give it a star on [GitHub](https://github.com/dmxiaoshubao/vuex-helper)! Your support is greatly appreciated.
