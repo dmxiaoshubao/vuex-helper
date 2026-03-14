@@ -2,7 +2,7 @@
 
 [中文文档](./docs/README.zh-CN.md)
 
-VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, and **Hover Information** for State, Getters, Mutations, and Actions.
+VS Code extension for Vuex 2 that provides **Go to Definition**, **Code Completion**, **Hover Information**, **Diagnostics**, and manual reindex support for State, Getters, Mutations, and Actions.
 
 ⭐ If you find this extension helpful, please give it a star on [GitHub](https://github.com/dmxiaoshubao/vuex-helper)! Your support is greatly appreciated.
 
@@ -62,11 +62,25 @@ Also supports code completion, jump to definition, and hover information within 
 
 - **Module Scope**: When writing actions in a module (e.g., `user.js`), suggestions for `commit` and `dispatch` are automatically filtered to the current module's context.
 
+### 5. Diagnostics
+
+Highlights invalid Vuex store references as warnings directly in your editor.
+
+- **Map Helpers**: Validates string arguments in `mapState`, `mapGetters`, `mapMutations`, `mapActions`.
+- **Commit / Dispatch**: Checks first argument of `commit()` and `dispatch()` calls.
+- **Store Access**: Validates first-segment `$store.state/getters` dot access and bracket notation.
+- **Store Internal**: Validates store-file `state.xxx` access plus `rootState` / `rootGetters` references.
+- **Comment Lines**: Skips common commented-out references on full comment lines.
+
+### 6. Reindex Command
+
+Run **"Vuex Helper: Reindex Store"** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) to manually trigger a full store re-index.
+
 ## Configuration
 
-You can configure the extension via `.vscode/settings.json` or `package.json`:
+You can configure the extension via the VS Code Settings UI or `.vscode/settings.json`:
 
-- `vuexHelper.storeEntry` (default: empty, auto-detect): Path to your Vuex store entry file. Supports aliases like `@/store/index.js` or relative paths. When left empty, the extension will automatically try to detect your store entry file.
+- `vuexHelper.storeEntry` (default: empty, auto-detect): Path to your Vuex store entry file. Supports aliases like `@/store/index.js`, workspace-relative paths, and absolute paths. When left empty, the extension tries to discover the store by parsing `src/main.{js,ts}` or `src/index.{js,ts}` for `new Vue({ store })`.
 
 ## Supported Syntax
 
@@ -120,10 +134,22 @@ You can configure the extension via `.vscode/settings.json` or `package.json`:
 | `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
 | `{ root: true }` namespace switch           | ✅     | commit/dispatch with root option                   |
 | State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
-| Vue 2 project detection                     | ✅     | Silent deactivation for non-Vuex projects          |
+| Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency |
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
+| Diagnostics for invalid store references    | ✅     | Warning on non-existent state/getter/mutation/action, including store-file `state.xxx` |
+| Manual reindex command                      | ✅     | `vuexHelper.reindex` via Command Palette           |
 
 ## Release Notes
+
+### 1.1.0
+
+Diagnostics and reindex command release:
+
+- **Added**: Diagnostics provider that highlights invalid Vuex store references (state/getter/mutation/action) as warnings.
+- **Added**: Manual reindex command (`vuexHelper.reindex`) accessible from the Command Palette.
+- **Added**: Store-file diagnostic coverage for `state`, `rootState`, and `rootGetters` references.
+- **Improved**: Diagnostics now refresh after initial indexing, manual reindex, file saves, and document open/close events.
+- **Improved**: Activation is skipped when the workspace has no `package.json`, avoiding false activation in standalone `.vue` directories.
 
 ### 1.0.0
 

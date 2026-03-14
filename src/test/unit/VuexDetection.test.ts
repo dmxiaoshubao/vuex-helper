@@ -21,9 +21,9 @@ describe('hasVuexDependency', () => {
         assert.strictEqual(result, false);
     });
 
-    it('should return false for simple-project without package.json', async () => {
+    it('should return true for simple-project with package.json', async () => {
         const result = await hasVuexDependency(path.join(fixturesDir, 'simple-project'));
-        // simple-project 没有 package.json，非 Node.js 项目，应返回 false
-        assert.strictEqual(result, false);
+        // simple-project 有 package.json 且包含 vuex 依赖
+        assert.strictEqual(result, true);
     });
 });

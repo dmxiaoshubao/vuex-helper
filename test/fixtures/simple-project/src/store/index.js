@@ -40,6 +40,7 @@ export default new Vuex.Store({
     // Set login status
     SET_LOGIN_STATUS(state, status) {
       state.isLoggedIn = status;
+      state.othersss = 1;
     },
     /**
      * Update preferences

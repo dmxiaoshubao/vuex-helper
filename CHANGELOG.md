@@ -2,6 +2,20 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.1.0] - 2026-03-14
+
+### Added
+
+- **Diagnostics provider**: Highlights invalid Vuex store references (state/getter/mutation/action) as warnings in the editor. Covers `mapState`/`mapGetters`/`mapMutations`/`mapActions` string arguments, `commit()`/`dispatch()` calls, `$store.state/getters` access, and store-file `state.xxx` / `rootState` / `rootGetters` references.
+- **Manual reindex command**: Registered `vuexHelper.reindex` command accessible from the Command Palette to trigger a full store re-index on demand.
+
+### Improved
+
+- **Diagnostics lifecycle**: Refreshes diagnostics after initial indexing, reindex completion, non-store file saves, and document open/close events.
+- **Activation guard**: Skips activation when workspace `package.json` is missing, preventing false activation in directories that only contain a standalone `.vue` file.
+- **Code organization**: Reordered diagnostic definitions before scheduler creation in extension activation to eliminate temporal dead zone risk in closure captures.
+- **Test reliability**: Moved global mock state cleanup to `finally` blocks to prevent state leakage on test assertion failures.
+
 ## [1.0.0] - 2026-02-19
 
 ### Added

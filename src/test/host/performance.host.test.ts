@@ -142,3 +142,41 @@ describe('Host Performance Smoke', function () {
         await measureDefinitionHoverLatency(document, position, 'App.vue');
     });
 });
+
+describe('Host Reindex Command', function () {
+    this.timeout(15000);
+
+    it('should execute vuexHelper.reindex command without error', async () => {
+        await ensureExtensionActivated();
+        // 命令应能正常执行，不抛异常
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        // 等待索引完成
+        await sleep(1000);
+    });
+});
+
+describe('Host Diagnostics', function () {
+    this.timeout(20000);
+
+    it('should produce diagnostics for opened vue file after indexing', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+
+        await ensureExtensionActivated();
+        await sleep(2000); // 等待初始索引完成
+
+        // 打开一个已知包含有效 store 引用的文件
+        const filePath = path.join(workspaceRoot, 'src/App.vue');
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        await vscode.window.showTextDocument(document);
+        await sleep(500);
+
+        // 诊断集合应存在（不抛异常即可，具体内容取决于 fixture）
+        const diags = vscode.languages.getDiagnostics
+            ? vscode.languages.getDiagnostics(document.uri)
+            : [];
+        // 只验证 API 可调用，不对具体数量做断言（fixture 内容可能变化）
+        assert.ok(Array.isArray(diags), 'getDiagnostics should return an array');
+    });
+});

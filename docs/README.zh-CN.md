@@ -1,6 +1,6 @@
 # Vuex Helper (中文说明)
 
-适用于 Vuex 2 的 VS Code 插件，提供 **跳转定义**、**代码补全** 和 **悬浮提示** 功能。支持 State, Getters, Mutations 和 Actions。
+适用于 Vuex 2 的 VS Code 插件，提供 **跳转定义**、**代码补全**、**悬浮提示**、**诊断** 和手动重索引能力。支持 State, Getters, Mutations 和 Actions。
 
 ⭐ 如果这个插件对你有帮助，请在 [GitHub](https://github.com/dmxiaoshubao/vuex-helper) 上给个 Star，感谢您的支持！
 
@@ -60,7 +60,19 @@
 
 - **模块作用域**: 当在模块文件（如 `user.js`）中编写 Action 时，`commit` 和 `dispatch` 的代码补全会自动过滤并仅显示当前模块的内容。
 
-同样支持在 Vuex Store 内部 代码补全、跳转、悬浮提示。
+### 5. 诊断 (Diagnostics)
+
+在编辑器中直接以 Warning 标记不存在的 Vuex Store 引用。
+
+- **辅助函数**: 校验 `mapState`、`mapGetters`、`mapMutations`、`mapActions` 中的字符串参数。
+- **Commit / Dispatch**: 检查 `commit()` 和 `dispatch()` 的第一个字符串参数。
+- **Store 访问**: 校验 `$store.state/getters` 第一层点号访问和方括号访问。
+- **Store 内部引用**: 校验 store 文件中的 `state.xxx` 访问，以及 `rootState` / `rootGetters` 引用。
+- **注释行规避**: 对整行注释中的常见引用不报 Warning。
+
+### 6. 重索引命令 (Reindex Command)
+
+通过命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）执行 **"Vuex Helper: Reindex Store"** 手动触发 store 全量重索引。
 
 ## 支持的语法示例
 
@@ -114,23 +126,37 @@
 | `this` 别名补全                             | ✅   | `const _t = this; _t.`                             |
 | `{ root: true }` 命名空间切换               | ✅   | commit/dispatch 的 root 选项                       |
 | State 链式路径中间词跳转                    | ✅   | 点击 `state.user.name` 中的 `user`                 |
-| Vue 2 项目检测                              | ✅   | 非 Vuex 项目静默不激活                             |
+| Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖时静默不激活 |
 | `rootState` / `rootGetters`                 | ✅   | 完整支持补全、跳转和悬浮提示                       |
+| 无效 Store 引用诊断                         | ✅   | 不存在的 state/getter/mutation/action 以 Warning 标记，含 store 文件 `state.xxx` |
+| 手动重索引命令                               | ✅   | 命令面板执行 `vuexHelper.reindex`                  |
 
 ## 使用要求
 
 - 使用 Vuex 的 Vue 2 项目。
-- Store 入口位于 `src/store/index.js` 或 `src/store/index.ts`（支持自动探测）。
+- 若希望自动探测，项目入口需位于 `src/main.js`、`src/main.ts`、`src/index.js` 或 `src/index.ts`，并通过 `new Vue({ store })` 注入 Vuex store。
 - 若无法自动找到，请在设置中配置 `vuexHelper.storeEntry`。
 
 ## 配置项
 
-- `vuexHelper.storeEntry`（默认为空，自动检测）: 手动指定 Store 入口文件路径。留空时插件会自动探测。支持：
+可通过 VS Code 设置界面或 `.vscode/settings.json` 配置。
+
+- `vuexHelper.storeEntry`（默认为空，自动检测）: 手动指定 Store 入口文件路径。留空时插件会尝试从 `src/main.{js,ts}` 或 `src/index.{js,ts}` 中解析 `new Vue({ store })` 自动探测。支持：
   - 别名路径: `@/store/index.js` (需在 jsconfig/tsconfig 中配置)
   - 相对路径: `src/store/index.js`
-  - 绝对路径: `/User/xxx/project/src/store/index.js`
+  - 绝对路径: `/Users/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 1.1.0
+
+诊断与重索引命令版本：
+
+- **新增**: 诊断 Provider，对不存在的 Vuex Store 引用（state/getter/mutation/action）以 Warning 标记。
+- **新增**: 手动重索引命令 `vuexHelper.reindex`，可通过命令面板触发全量重索引。
+- **新增**: 覆盖 store 文件内 `state`、`rootState`、`rootGetters` 引用的诊断。
+- **优化**: 诊断会在初始化索引、手动重索引、保存文件以及文档打开/关闭后及时刷新。
+- **优化**: 当工作区不存在 `package.json` 时不再激活，避免仅含独立 `.vue` 文件的目录被误判激活。
 
 ### 1.0.0
 

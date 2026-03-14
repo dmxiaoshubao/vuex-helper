@@ -2,8 +2,8 @@
   "name": "vuex-helper",
   "publisher": "dmxiaoshubao",
   "displayName": "Vuex Helper",
-  "description": "Vuex reference jumping, code completion, and hover for Vue 2.",
-  "version": "1.0.0",
+  "description": "Vuex definition, completion, hover, diagnostics, and reindex support for Vue 2.",
+  "version": "1.1.0",
   "icon": "images/icon.png",
   "license": "MIT",
   "repository": {
@@ -23,6 +23,12 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "vuexHelper.reindex",
+        "title": "Vuex Helper: Reindex Store"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Vuex Helper",

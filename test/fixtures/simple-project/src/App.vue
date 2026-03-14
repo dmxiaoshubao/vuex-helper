@@ -30,7 +30,7 @@
 
 <script>
 import { mapState, mapGetters, mapMutations, mapActions } from "vuex";
-import store from './store'
+import store from "./store";
 
 export default {
   name: "App",
@@ -42,7 +42,7 @@ export default {
 
     // [1.1] 数组语法 - 根模块 state
     // 测试: 在引号内输入，应显示 count, isLoggedIn, preferences 等
-    ...mapState(["count", 'isLoggedIn', 'items']), // <- 光标放引号内，测试根 state 补全
+    ...mapState(["count", "isLoggedIn", "items"]), // <- 光标放引号内，测试根 state 补全
 
     // [1.2] 数组语法 - 命名空间模块 state (user)
     // 测试: 在引号内输入，应只显示 user 模块的 state: name, age, roles, isActive
@@ -50,7 +50,12 @@ export default {
 
     // [1.3] 数组语法 - 命名空间模块 state (others)
     // 测试: 在引号内输入，应只显示 others 模块的 state: productName, version, theme, language, notifications, lastUpdated
-    ...mapState("others", ["productName", "theme", 'language', 'notifications']), // <- 光标放引号内
+    ...mapState("others", [
+      "productName",
+      "theme",
+      "language",
+      "notifications",
+    ]), // <- 光标放引号内
 
     // [1.4] 对象语法 - 别名映射
     // 测试: 在值引号内输入，应显示 state 列表
@@ -79,8 +84,8 @@ export default {
     ...mapState({
       aliasCount: "count",
       aliasTheme: "others/language",
-      count: 'count',
-      lastUpdated: 'others/theme',
+      count: "count",
+      lastUpdated: "others/theme",
     }),
 
     // ========================================
@@ -90,25 +95,25 @@ export default {
     // [1.8.1] 箭头函数中的 state. 补全
     // 测试: 输入 state. 后应显示根 state: count, isLoggedIn, user, others 等
     ...mapState({
-      arrowCount: state => state.count, // <- 光标放点后
+      arrowCount: (state) => state.count, // <- 光标放点后
     }),
 
     // [1.8.2] 箭头函数中带前缀
     // 测试: 输入 state.c 后应过滤显示 count
     ...mapState({
-      arrowCount2: state => state.count, // <- 光标放 c 后
+      arrowCount2: (state) => state.count, // <- 光标放 c 后
     }),
 
     // [1.8.3] 箭头函数中访问 user 模块 state
     // 测试: 输入 state.user. 后应显示 user 模块的 state: name, age, roles, isActive
     ...mapState({
-      userName: state => state.user.name, // <- 光标放点后
+      userName: (state) => state.user.name, // <- 光标放点后
     }),
 
     // [1.8.4] 箭头函数中访问 others 模块 state
     // 测试: 输入 state.others. 后应显示 others 模块的 state: productName, version, theme, language 等
     ...mapState({
-      appTheme: state => state.others.notifications, // <- 光标放点后
+      appTheme: (state) => state.others.notifications, // <- 光标放点后
     }),
 
     // [1.8.5] 普通函数语法
@@ -171,7 +176,11 @@ export default {
     // --- 实际使用的 mapGetters ---
     ...mapGetters(["isLoggedIn", "getItemById"]),
     ...mapGetters("user", ["upperName", "userAge", "hasRole", "isAdmin"]),
-    ...mapGetters("others", ["isDarkMode", "languageDisplay", "hasNotifications"]),
+    ...mapGetters("others", [
+      "isDarkMode",
+      "languageDisplay",
+      "hasNotifications",
+    ]),
 
     // ========================================
     // 3. this.$store.state.xxx 点号访问测试
@@ -180,7 +189,7 @@ export default {
     testStateAccess() {
       // [3.1] 根 state 点号访问
       // 测试: 输入 this.$store.state. 后应显示 count, isLoggedIn, user, others 等
-      this.$store.state['others/language']; // <- 光标放点后
+      this.$store.state["others/language"]; // <- 光标放点后
 
       // [3.2] 根 state 带前缀
       // 测试: 输入 this.$store.state.c 后应过滤显示 count
@@ -195,7 +204,11 @@ export default {
       this.$store.state.others.lastUpdated; // <- 光标放点后
 
       // 实际调用
-      return this.$store.state.count + this.$store.state.user.name + this.$store.state.others.theme;
+      return (
+        this.$store.state.count +
+        this.$store.state.user.name +
+        this.$store.state.others.theme
+      );
     },
 
     // ========================================
@@ -205,11 +218,11 @@ export default {
     testGettersAccess() {
       // [4.1] 根 getters 点号访问
       // 测试: 输入 this.$store.getters. 后应显示 isLoggedIn, getItemById 等
-      this.$store.getters['others/hasNotifications']; // <- 光标放点后
+      this.$store.getters["others/hasNotifications"]; // <- 光标放点后
 
       // [4.2] 根 getters 带前缀
       // 测试: 输入 this.$store.getters.is 后应过滤显示 isLoggedIn
-      this.$store.getters['others/isAutoTheme']; // <- 光标放 s 后
+      this.$store.getters["others/isAutoTheme"]; // <- 光标放 s 后
 
       // 实际调用
       return this.$store.getters.isLoggedIn;
@@ -222,18 +235,18 @@ export default {
     testStateBracketAccess() {
       // [5.1] 根 state 方括号访问
       // 测试: 输入 this.$store.state[' 后应显示 state 列表
-      this.$store.state['count']; // <- 光标放引号内
+      this.$store.state["count"]; // <- 光标放引号内
 
       // [5.2] 带路径的 state (user)
       // 测试: 输入 user/ 后应显示 user 模块的 state
-      this.$store.state['user/age']; // <- 光标放斜杠后
+      this.$store.state["user/age"]; // <- 光标放斜杠后
 
       // [5.3] 带路径的 state (others)
       // 测试: 输入 others/ 后应显示 others 模块的 state
-      this.$store.state['others/productName']; // <- 光标放斜杠后
+      this.$store.state["others/productName"]; // <- 光标放斜杠后
 
       // 实际调用
-      return this.$store.state['user/name'] + this.$store.state['others/theme'];
+      return this.$store.state["user/name"] + this.$store.state["others/theme"];
     },
 
     // ========================================
@@ -243,10 +256,13 @@ export default {
     testGettersBracketAccess() {
       // [6.1] 根 getters 方括号访问
       // 测试: 输入 this.$store.getters[' 后应显示 getters 列表
-      this.$store.getters['getItemById']; // <- 光标放引号内
+      this.$store.getters["getItemById"]; // <- 光标放引号内
 
       // 实际调用
-      return this.$store.getters['user/upperName'] + this.$store.getters['others/isDarkMode'];
+      return (
+        this.$store.getters["user/upperName"] +
+        this.$store.getters["others/isDarkMode"]
+      );
     },
   },
 
@@ -257,7 +273,7 @@ export default {
 
     // [7.1] 数组语法 - 根模块 mutations
     // 测试: 在引号内输入，应显示 increment, SET_LOGIN_STATUS 等
-    ...mapMutations(["increment", 'others/RESET_SETTINGS']), // <- 光标放引号内
+    ...mapMutations(["increment", "others/RESET_SETTINGS"]), // <- 光标放引号内
 
     // [7.2] 数组语法 - 命名空间模块 mutations (user)
     // 测试: 在引号内输入，应只显示 user 模块的 mutations: SET_NAME, SET_AGE, ADD_ROLE, toggleActive, SET_PROFILE
@@ -271,7 +287,7 @@ export default {
     // 测试: 在值引号内输入
     ...mapMutations({
       myIncrement: "increment", // <- 光标放引号内
-      RESET_SETTINGS: 'others/RESET_SETTINGS',
+      RESET_SETTINGS: "others/RESET_SETTINGS",
     }),
 
     // [7.5] 带路径的 mutation 名称 (user)
@@ -285,12 +301,31 @@ export default {
     ...mapMutations("others", ["SET_PRODUCT_NAME"]), // <- 光标放第一个引号内
 
     // --- 实际使用的 mapMutations ---
-    ...mapMutations(["increment", "SET_LOGIN_STATUS", "UPDATE_PREFERENCES", "addItem"]),
-    ...mapMutations("user", ["SET_NAME", "SET_AGE", "ADD_ROLE", "toggleActive", "SET_PROFILE"]),
+    ...mapMutations([
+      "increment",
+      "SET_LOGIN_STATUS",
+      "UPDATE_PREFERENCES",
+      "addItem",
+    ]),
+    ...mapMutations("user", [
+      "SET_NAME",
+      "SET_AGE",
+      "ADD_ROLE",
+      "toggleActive",
+      "SET_PROFILE",
+    ]),
     ...mapMutations("user", {
       addRole: "ADD_ROLE",
+      aff: "axx",
     }),
-    ...mapMutations("others", ["SET_PRODUCT_NAME", "SET_VERSION", "toggleTheme", "SET_LANGUAGE", "toggleNotifications"]),
+    ...mapMutations("others", [
+      "SET_PRODUCT_NAME",
+      "SET_VERSION",
+      "toggleTheme",
+      "SET_LANGUAGE",
+      "toggleNotifications",
+      "x22",
+    ]),
     ...mapMutations(["others/SET_THEME", "others/RESET_SETTINGS"]),
 
     // ========================================
@@ -327,8 +362,19 @@ export default {
 
     // --- 实际使用的 mapActions ---
     ...mapActions(["incrementAsync", "login", "updatePreferences"]),
-    ...mapActions("user", ["updateName", "updateInfoAsync", "fetchProfile", "logout"]),
-    ...mapActions("others", ["updateProductName", "updateVersion", "changeTheme", "updateLanguage", "factoryReset"]),
+    ...mapActions("user", [
+      "updateName",
+      "updateInfoAsync",
+      "fetchProfile",
+      "logout",
+    ]),
+    ...mapActions("others", [
+      "updateProductName",
+      "updateVersion",
+      "changeTheme",
+      "updateLanguage",
+      "factoryReset",
+    ]),
 
     // ========================================
     // 9. this.$store.commit 补全测试
@@ -382,6 +428,7 @@ export default {
       this.$store.dispatch("incrementAsync");
       this.$store.dispatch("user/updateName", "New Name");
       this.$store.dispatch("others/changeTheme", "dark");
+      this.$store.dispatch("fff", "");
     },
 
     // ========================================
@@ -399,25 +446,25 @@ export default {
 
       // [11.3] this.i 应过滤显示 isLoggedIn, increment 等
       this.increment(); // <- 光标放 i 后
-      this['others/hasNotifications']
+      this["others/hasNotifications"];
 
       // [11.4] 带斜杠的映射属性（方括号访问）- user
       // 测试: 输入 this['user/ 应显示 user 模块的映射
-      this['user/']; // <- 光标放斜杠后
+      this["user/"]; // <- 光标放斜杠后
 
       // [11.5] 带斜杠的映射属性（方括号访问）- others
       // 测试: 输入 this['others/ 应显示 others 模块的映射: others/SET_THEME, others/changeTheme 等
-      this['others/']; // <- 光标放斜杠后
+      this["others/"]; // <- 光标放斜杠后
 
       // 实际调用
       console.log(this.count);
       console.log(this.isLoggedIn);
       console.log(this.name);
       console.log(this.theme); // others 模块的 theme
-      this.a1()
+      this.a1();
       this.increment();
       this.incrementAsync();
-      this['others/SET_THEME']
+      this["others/SET_THEME"];
       this["others/changeTheme"]("light");
     },
 
@@ -452,22 +499,22 @@ export default {
     // ========================================
     // 14. 生命周期钩子中的 this. 补全
     // ========================================
-    this.addRole()
-    this.age
-    this.callRootAction()
+    this.addRole();
+    this.age;
+    this.callRootAction();
 
     // [14.1] created 中 this. 补全
-    this['others/changeTheme'](); // <- 光标放点后，应显示所有映射属性
+    this["others/changeTheme"](); // <- 光标放点后，应显示所有映射属性
 
     // [14.2] 不完整的 this. 语句（测试代码预处理修复）
     // 这是之前 bug 的复现场景
-    this['others/changeTheme']()
+    this["others/changeTheme"]();
     // <- 光标放这里，应该仍能显示补全列表
-    this.$store.dispatch('incrementAsync')
-    this.$store.commit('increment')
+    this.$store.dispatch("incrementAsync");
+    this.$store.commit("increment");
 
     // [14.3] 另一个不完整语句测试
-    this.addRole()
+    this.addRole();
   },
 
   mounted() {

@@ -91,7 +91,24 @@ export const ConfigurationTarget = {
     WorkspaceFolder: 3
 };
 
+export class Diagnostic {
+    source?: string;
+    constructor(public range: Range, public message: string, public severity?: number) {}
+}
+
+export const DiagnosticSeverity = {
+    Error: 0,
+    Warning: 1,
+    Information: 2,
+    Hint: 3
+};
+
 const noopDisposable = { dispose: () => undefined };
+
+export const commands = {
+    registerCommand: (_command: string, _callback: (...args: any[]) => any) => noopDisposable,
+    executeCommand: async (..._args: any[]) => undefined
+};
 
 export const workspace = {
     workspaceFolders: [{ uri: { fsPath: '/mock/workspace' } }],
@@ -102,7 +119,13 @@ export const workspace = {
         update: async (_key: string, _value: any, _target?: any) => undefined
     }),
     onDidSaveTextDocument: (_listener: any) => noopDisposable,
-    onDidChangeConfiguration: (_listener: any) => noopDisposable
+    onDidOpenTextDocument: (_listener: any) => noopDisposable,
+    onDidCloseTextDocument: (_listener: any) => noopDisposable,
+    onDidChangeConfiguration: (_listener: any) => noopDisposable,
+    onDidCreateFiles: (_listener: any) => noopDisposable,
+    onDidDeleteFiles: (_listener: any) => noopDisposable,
+    onDidRenameFiles: (_listener: any) => noopDisposable,
+    textDocuments: [] as any[]
 };
 
 export const window = {
@@ -115,5 +138,15 @@ export const window = {
 export const languages = {
     registerDefinitionProvider: (_selector: any, _provider: any) => noopDisposable,
     registerCompletionItemProvider: (_selector: any, _provider: any, ..._triggerCharacters: string[]) => noopDisposable,
-    registerHoverProvider: (_selector: any, _provider: any) => noopDisposable
+    registerHoverProvider: (_selector: any, _provider: any) => noopDisposable,
+    createDiagnosticCollection: (_name?: string) => ({
+        set: (_uri: any, _diagnostics: any) => undefined,
+        delete: (_uri: any) => undefined,
+        clear: () => undefined,
+        dispose: () => undefined,
+        forEach: (_callback: any) => undefined,
+        get: (_uri: any) => undefined,
+        has: (_uri: any) => false,
+        name: _name || 'mock',
+    })
 };

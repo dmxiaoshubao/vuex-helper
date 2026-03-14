@@ -74,11 +74,13 @@ const actions = {
    * Example of accessing root state and getters
    * @param {object} context
    */
-  accessRootState({ commit, rootState, rootGetters }) {
+  accessRootState({ commit, rootState, rootGetters, getters }) {
+    state.isActive2;
     // ========================================
     // rootState 自测用例
     // ========================================
-
+    rootState.othersss;
+    rootGetters["others/hasNotifications2"];
     // [RS.1] rootState. 补全 — 应显示根 state 属性 (count, isLoggedIn, preferences, items) 和子模块名 (user, others)
     rootState.count; // <- 光标放点后
 
@@ -111,17 +113,17 @@ const actions = {
     rootGetters.isLoggedIn; // <- 光标放 isLoggedIn 上
 
     // [RG.3] rootGetters['xxx'] 方括号补全 — 应显示所有 getter 的完整路径
-    rootGetters['user/upperName']; // <- 光标放引号内
+    rootGetters["user/upperName"]; // <- 光标放引号内
 
     // [RG.4] rootGetters['ns/xxx'] 跳转/悬浮 — 点击 upperName 应跳转到 user.js 的 upperName getter 定义
-    rootGetters['user/upperName']; // <- 光标放 upperName 上
+    rootGetters["user/upperName"]; // <- 光标放 upperName 上
 
     // [RG.5] rootGetters['xxx'] 另一个命名空间 — others 模块的 getter
-    rootGetters['others/isDarkMode']; // <- 光标放引号内
+    rootGetters["others/isDarkMode"]; // <- 光标放引号内
 
     // Commit root mutation
     commit("increment", null, { root: true });
-    commit('toggleActive', null, { root: false })
+    commit("toggleActive", null, { root: false });
   },
   /**
    * Example of dispatching root action
@@ -165,7 +167,7 @@ const getters = {
     rootGetters.isLoggedIn; // <- 光标放点后
 
     // rootGetters['xxx'] 方括号补全
-    rootGetters['others/isDarkMode']; // <- 光标放引号内
+    rootGetters["others/isDarkMode"]; // <- 光标放引号内
 
     return `${state.name} (${rootState.others.language})`;
   },
