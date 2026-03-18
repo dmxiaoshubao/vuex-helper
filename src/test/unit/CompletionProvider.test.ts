@@ -1796,6 +1796,99 @@ export default {
         });
     });
 
+    describe('in-module getters completion', () => {
+        // mock indexer：user 模块有两个 getter，根模块有一个
+        class InModuleGettersMockStoreIndexer extends StoreIndexer {
+            constructor() { super(''); }
+            getStoreMap() {
+                return {
+                    state: [{ name: 'count', modulePath: [], defLocation: {} as any }],
+                    getters: [
+                        { name: 'upperName', modulePath: ['user'], defLocation: {} as any },
+                        { name: 'isAdmin', modulePath: ['user'], defLocation: {} as any },
+                        { name: 'isLoggedIn', modulePath: [], defLocation: {} as any },
+                    ],
+                    mutations: [],
+                    actions: [],
+                };
+            }
+            getNamespace() { return ['user']; }
+            getStoreEntryPath() { return null; }
+        }
+
+        function createStoreDocument(text: string) {
+            const lines = text.split('\n');
+            return {
+                fileName: '/mock/workspace/src/store/modules/user.js',
+                languageId: 'javascript',
+                version: 1,
+                uri: { toString: () => 'file:///mock/workspace/src/store/modules/user.js' },
+                getText: () => text,
+                offsetAt: (pos: any) => {
+                    let offset = 0;
+                    for (let i = 0; i < pos.line; i++) {
+                        offset += lines[i].length + 1;
+                    }
+                    offset += pos.character;
+                    return offset;
+                },
+                lineAt: (lineOrPos: any) => {
+                    const lineNum = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
+                    return { text: lines[lineNum] || '', lineNumber: lineNum };
+                },
+            } as any;
+        }
+
+        it('should provide in-module getters completion for getters.', async () => {
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `const g = (state, getters) => { getters. }`;
+            const cursor = text.indexOf('getters.') + 'getters.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items && items.length > 0, 'Should provide in-module getters completion');
+
+            const upperNameItem = items.find((i: any) => i.label === 'upperName');
+            assert.ok(upperNameItem, 'Should find local getter "upperName"');
+
+            const isAdminItem = items.find((i: any) => i.label === 'isAdmin');
+            assert.ok(isAdminItem, 'Should find local getter "isAdmin"');
+
+            // 不应出现根模块 getter
+            const rootItem = items.find((i: any) => i.label === 'isLoggedIn');
+            assert.ok(!rootItem, 'Should not include root getter "isLoggedIn"');
+        });
+
+        it('should not provide in-module getters completion for rootGetters.', async () => {
+            // rootGetters. 不应被内部 getters 逻辑拦截
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `const g = (state, getters, rootState, rootGetters) => { rootGetters. }`;
+            const cursor = text.indexOf('rootGetters.') + 'rootGetters.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            // rootGetters 应由另一个逻辑处理，包含全部 getter
+            const rootItem = items?.find((i: any) => i.label === 'isLoggedIn');
+            assert.ok(rootItem, 'rootGetters. should still show root getters');
+        });
+
+        it('should not provide in-module getters completion for shadowed local getters variable', async () => {
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `function helper() { const getters = cache; return getters. }`;
+            const cursor = text.indexOf('getters.') + 'getters.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.strictEqual(items.length, 0, 'Shadowed local getters variable should not trigger Vuex completion');
+        });
+    });
+
     describe('script setup support', () => {
         function createVueDocument(text: string) {
             const lines = text.split('\n');

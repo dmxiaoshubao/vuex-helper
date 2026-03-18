@@ -877,3 +877,37 @@ describe('VuexDefinitionProvider optional-chain state access', () => {
         assert.strictEqual((definition as any).rangeOrPosition.line, 3);
     });
 });
+
+describe('VuexDefinitionProvider internal getters access', () => {
+    it('should jump to local getter for getters.isActive in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `const g = (state, getters) => { return getters.isActive }`;
+        const char = text.indexOf('getters.isActive') + 'getters.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for internal getters access');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should not resolve internal getters in non-store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nconst x = getters.isActive\n</script>`;
+        const char = text.split('\n')[1].indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Should not resolve getters in non-store file');
+    });
+
+    it('should not resolve shadowed local getters variable in store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function helper() { const getters = cache; return getters.isActive }`;
+        const char = text.indexOf('getters.isActive') + 'getters.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Shadowed local getters variable should not resolve to Vuex getter');
+    });
+});

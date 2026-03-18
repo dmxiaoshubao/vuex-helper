@@ -75,7 +75,9 @@ const actions = {
    * @param {object} context
    */
   accessRootState({ commit, rootState, rootGetters, getters }) {
-    state.isActive2;
+    getters.nameWithCount;
+
+    state.age;
     // ========================================
     // rootState 自测用例
     // ========================================
@@ -190,6 +192,9 @@ const getters = {
 
     // rootGetters['xxx'] 方括号补全
     rootGetters["others/isDarkMode"]; // <- 光标放引号内
+
+    // getters. 补全 — 应显示本模块的 getter
+    getters.upperName; // <- 光标放点后
 
     return `${state.name} (${rootState.others.language})`;
   },

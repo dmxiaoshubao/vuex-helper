@@ -13,6 +13,7 @@ import {
     extractStoreAccessPath,
     hasChainedPropertySuffix,
     hasRootTrueOption,
+    hasParamBindingMemberAccess,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
 
@@ -134,6 +135,15 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
              return this.findDefinition(word, 'state', currentNamespace.join('/'));
+        }
+
+        // 2c-2. 内部 getters.xxx 跳转（排除 rootGetters）
+        if (
+            currentNamespace &&
+            /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
+            hasParamBindingMemberAccess(document, position, 'getters')
+        ) {
+             return this.findDefinition(word, 'getter', currentNamespace.join('/'));
         }
 
         // 2d. this.$store.state.xxx.yyy / this.$store?.getters.xxx — 通用链式访问（含可选链）

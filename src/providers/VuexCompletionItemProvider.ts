@@ -7,6 +7,7 @@ import { PathResolver } from "../utils/PathResolver";
 import {
   collectStoreLikeNames,
   hasRootTrueOption,
+  hasParamBindingMemberAccess,
 } from "../utils/VuexProviderUtils";
 
 export class VuexCompletionItemProvider
@@ -901,6 +902,43 @@ export class VuexCompletionItemProvider
         });
 
         return new vscode.CompletionList(Array.from(suggestions.values()), false);
+      }
+
+      // 3b. In-Module Getters Completion (getters.xxx)
+      const inModuleGettersMatch = prefix.match(/(?<!\.|root)\bgetters\.([a-zA-Z0-9_$]*)$/);
+      if (
+        inModuleGettersMatch &&
+        hasParamBindingMemberAccess(document, position, "getters", {
+          replaceBeforeCursor: inModuleGettersMatch[1]?.length ?? 0,
+        })
+      ) {
+        if (token.isCancellationRequested) return undefined;
+        const currentInput = inModuleGettersMatch[1] || "";
+        const nsStr = currentNamespace.join("/");
+
+        const replacementRange = this.createDotRange(
+          position.line,
+          position.character,
+          currentInput.length,
+        );
+
+        const items: vscode.CompletionItem[] = [];
+        storeMap.getters.forEach((item) => {
+          if (item.modulePath.join("/") !== nsStr) return;
+          const label = item.name;
+          const completionItem = this.createCompletionItem(
+            label,
+            vscode.CompletionItemKind.Function,
+            "[Vuex Module] getter",
+            item.documentation,
+          );
+          completionItem.range = replacementRange;
+          completionItem.insertText = "." + label;
+          completionItem.filterText = "." + label;
+          items.push(completionItem);
+        });
+
+        return new vscode.CompletionList(items, false);
       }
     }
 

@@ -22,7 +22,11 @@ export default new Vuex.Store({
     items: [],
   },
   getters: {
-    isLoggedIn: (state) => state.isLoggedIn,
+    isLoggedIn: (state, getters, rootState, rootGetters) => {
+      rootState.others.language
+      rootGetters['others/hasNotifications']
+      return state.isLoggedIn
+    },
     /**
      * Get item by id
      * @param {object} state
@@ -69,7 +73,10 @@ export default new Vuex.Store({
       commit("SET_LOGIN_STATUS", true);
     },
     // Update preferences async
-    updatePreferences({ commit }, preferences) {
+    updatePreferences({ commit, getters, state, dispatch }, preferences) {
+      getters.getItemById
+      state.others.language
+      dispatch('login', null, { root: true })
       commit("UPDATE_PREFERENCES", preferences);
     },
   },

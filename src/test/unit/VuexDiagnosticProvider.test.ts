@@ -442,4 +442,30 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
+
+    // ---- 内部 getters.xxx 访问 ----
+    it('should not warn for valid internal getters access in module file', () => {
+        const doc = createDocument(
+            `const g = (state, getters) => getters.cartTotal`,
+            '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should warn for invalid internal getters access in module file', () => {
+        const doc = createDocument(
+            `const g = (state, getters) => getters.nonExistent`,
+            '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.length > 0, 'Should warn for invalid getters access');
+        assert.ok(diags[0].message.includes('nonExistent'));
+    });
+
+    it('should not scan internal getters in non-store files', () => {
+        const doc = createDocument(
+            `const result = getters.nonExistent`,
+            '/mock/workspace/src/App.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Non-store file should not scan internal getters');
+    });
 });

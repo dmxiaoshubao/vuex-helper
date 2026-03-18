@@ -92,12 +92,14 @@ export class VuexDiagnosticProvider {
         this.scanStoreDotChain(content, scriptOffset, document, refs);
         this.scanRootStateGetters(content, scriptOffset, document, refs);
 
-        // store 文件内部的裸 state.xxx 访问（mutation/getter/action 参数）
+        // store 文件内部的裸 state.xxx / getters.xxx 访问（mutation/getter/action 参数）
         if (currentNamespace) {
             if (ast) {
                 this.scanInternalStateAccessAst(ast, scriptOffset, document, currentNamespace, refs);
+                this.scanInternalGettersAccessAst(ast, scriptOffset, document, currentNamespace, refs);
             } else {
                 this.scanInternalStateAccess(content, scriptOffset, document, currentNamespace, refs);
+                this.scanInternalGettersAccess(content, scriptOffset, document, currentNamespace, refs);
             }
         }
 
@@ -615,6 +617,70 @@ export class VuexDiagnosticProvider {
             refs.push({
                 name: node.property.name,
                 type: 'state',
+                range: this.createNodeRange(node.property, scriptOffset, document),
+                currentNamespace,
+                preferLocal: true,
+            });
+        };
+
+        traverse(ast, {
+            MemberExpression: visitMember,
+            OptionalMemberExpression: visitMember,
+        } as any);
+    }
+
+    /**
+     * g) 扫描 store 文件内部裸 getters.xxx 访问（getter/action 参数中的 getters）
+     * 排除 rootGetters 和 .getters（如 $store.getters）已由其他方法处理的模式。
+     */
+    private scanInternalGettersAccess(
+        content: string, scriptOffset: number, document: vscode.TextDocument,
+        currentNamespace: string[], refs: DiagnosableRef[],
+    ): void {
+        const pattern = /(?<!\.|root)\bgetters(?:\?\.|\.)([A-Za-z_$][\w$]*)/g;
+        let match: RegExpExecArray | null;
+
+        while ((match = pattern.exec(content)) !== null) {
+            const name = match[1];
+
+            const absOffset = scriptOffset + match.index;
+            const pos = document.positionAt(absOffset);
+            const lineText = document.lineAt(pos.line).text;
+            const trimmed = lineText.trimStart();
+            if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
+
+            const nameIdx = match[0].lastIndexOf(name);
+            const nameStart = scriptOffset + match.index + nameIdx;
+            const startPos = document.positionAt(nameStart);
+            const endPos = document.positionAt(nameStart + name.length);
+            const range = new vscode.Range(startPos, endPos);
+
+            refs.push({
+                name, type: 'getter', range,
+                currentNamespace, preferLocal: true,
+            });
+        }
+    }
+
+    private scanInternalGettersAccessAst(
+        ast: t.File,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+        currentNamespace: string[],
+        refs: DiagnosableRef[],
+    ): void {
+        const visitMember = (path: any) => {
+            const node = path.node;
+            if (node.computed) return;
+            if (node.object.type !== 'Identifier' || node.object.name !== 'getters') return;
+            if (node.property.type !== 'Identifier') return;
+
+            const binding = path.scope.getBinding('getters');
+            if (!binding || binding.kind !== 'param') return;
+
+            refs.push({
+                name: node.property.name,
+                type: 'getter',
                 range: this.createNodeRange(node.property, scriptOffset, document),
                 currentNamespace,
                 preferLocal: true,

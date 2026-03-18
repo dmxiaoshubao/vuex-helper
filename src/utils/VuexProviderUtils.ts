@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as parser from '@babel/parser';
+import traverse from '@babel/traverse';
+import type * as t from '@babel/types';
 import { PathResolver } from './PathResolver';
 
 export type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
@@ -442,4 +445,98 @@ export function extractCurrentCallBody(
     }
 
     return source.substring(openParenOffset, i);
+}
+
+/**
+ * 检查当前位置是否命中了形如 getters.foo / getters?.foo 的成员访问，
+ * 且该标识符在当前作用域中绑定为函数参数。
+ * `replaceBeforeCursor` 用于补全中的不完整输入：会先把光标前的部分属性名替换成占位符再解析。
+ */
+export function hasParamBindingMemberAccess(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    objectName: string,
+    options: { replaceBeforeCursor?: number } = {},
+): boolean {
+    const scriptText = extractProviderScriptContent(document.getText());
+    if (!scriptText) return false;
+
+    const documentOffset = document.offsetAt(position);
+    const scriptStart = scriptText.offset;
+    const scriptEnd = scriptStart + scriptText.content.length;
+    if (documentOffset < scriptStart || documentOffset > scriptEnd) {
+        return false;
+    }
+
+    let content = scriptText.content;
+    let localOffset = documentOffset - scriptStart;
+    const replaceBeforeCursor = options.replaceBeforeCursor ?? 0;
+    const placeholder = '__vuexHelperProbe__';
+
+    if (replaceBeforeCursor > 0) {
+        const replaceStart = localOffset - replaceBeforeCursor;
+        if (replaceStart < 0) return false;
+        content =
+            content.slice(0, replaceStart) +
+            placeholder +
+            content.slice(localOffset);
+        localOffset = replaceStart;
+    } else if (replaceBeforeCursor === 0) {
+        content =
+            content.slice(0, localOffset) +
+            placeholder +
+            content.slice(localOffset);
+    }
+
+    let ast: t.File;
+    try {
+        ast = parser.parse(content, {
+            sourceType: 'module',
+            plugins: ['typescript', 'jsx'],
+            errorRecovery: true,
+        });
+    } catch {
+        return false;
+    }
+
+    let matched = false;
+    const visitMember = (path: any) => {
+        const node = path.node;
+        if (node.computed) return;
+        if (node.object.type !== 'Identifier' || node.object.name !== objectName) return;
+        if (node.property.type !== 'Identifier') return;
+
+        if (options.replaceBeforeCursor !== undefined) {
+            if (node.property.name !== placeholder) return;
+        } else {
+            const start = node.property.start ?? -1;
+            const end = node.property.end ?? start;
+            if (localOffset < start || localOffset > end) return;
+        }
+
+        const binding = path.scope.getBinding(objectName);
+        if (!binding || binding.kind !== 'param') return;
+
+        matched = true;
+        path.stop();
+    };
+
+    traverse(ast, {
+        MemberExpression: visitMember,
+        OptionalMemberExpression: visitMember,
+    } as any);
+
+    return matched;
+}
+
+function extractProviderScriptContent(text: string): { content: string; offset: number } | null {
+    if (!/<template[\s>]/.test(text)) {
+        return { content: text, offset: 0 };
+    }
+
+    const match = /<script(?![^>]*\bsetup\b)[^>]*>([\s\S]*?)<\/script>/.exec(text);
+    if (!match) return null;
+
+    const contentStart = match.index + match[0].indexOf(match[1]);
+    return { content: match[1], offset: contentStart };
 }
