@@ -143,6 +143,14 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 
 ## Release Notes
 
+### 1.1.1
+
+Bug-fix release focused on definition accuracy and Vuex internal scope handling:
+
+- **Fixed**: Vuex definition navigation now resolves more reliably for module/root context switches and mapped access paths.
+- **Fixed**: Store-internal completion, definition, hover, and diagnostics now scope getters access to real Vuex callback parameters, reducing false positives and incorrect suggestions inside local functions.
+- **Improved**: Host test stability and fixture alignment were tightened to keep release verification consistent.
+
 ### 1.1.0
 
 Diagnostics and reindex command release:

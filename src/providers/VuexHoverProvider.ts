@@ -11,6 +11,7 @@ import {
     extractStringLiteralPathAtPosition,
     detectStoreBracketAccessor,
     extractStoreAccessPath,
+    hasParamBindingMemberAccess,
     hasRootTrueOption,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
@@ -96,6 +97,14 @@ export class VuexHoverProvider implements vscode.HoverProvider {
 
         if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
              return this.findHover(word, 'state', currentNamespace.join('/'));
+        }
+
+        if (
+            currentNamespace &&
+            /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
+            hasParamBindingMemberAccess(document, position, 'getters')
+        ) {
+             return this.findHover(word, 'getter', currentNamespace.join('/'));
         }
 
         // 3d. this.$store.state.xxx / this.$store?.getters?.xxx hover

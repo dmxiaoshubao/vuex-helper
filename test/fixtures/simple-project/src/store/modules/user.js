@@ -76,6 +76,7 @@ const actions = {
    */
   accessRootState({ commit, rootState, rootGetters, getters }) {
     getters.nameWithCount;
+    getters.isAdmin2;
 
     state.age;
     // ========================================

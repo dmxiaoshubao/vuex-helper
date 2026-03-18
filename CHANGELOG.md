@@ -2,6 +2,17 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.1.1] - 2026-03-18
+
+### Fixed
+
+- **Definition navigation accuracy**: Corrected Vuex definition lookup for module/root context switches and mapped access paths so go-to-definition lands on the expected store target more consistently.
+- **Vuex internal getter scoping**: Limited internal getter resolution in completion, definition, hover, and diagnostics to real Vuex callback parameters, preventing local function scopes from being mistaken for store context.
+
+### Improved
+
+- **Host verification stability**: Tightened host test stability and fixture alignment to reduce release verification drift.
+
 ## [1.1.0] - 2026-03-14
 
 ### Added

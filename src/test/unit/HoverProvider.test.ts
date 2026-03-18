@@ -39,6 +39,16 @@ class MockStoreIndexer extends StoreIndexer {
     getStoreEntryPath() {
         return this.storeEntryPathForTest;
     }
+
+    getNamespace(filePath: string) {
+        if (filePath.includes('/src/store/modules/user')) {
+            return ['user'];
+        }
+        if (filePath.includes('/src/store/modules/others')) {
+            return ['others'];
+        }
+        return undefined;
+    }
 }
 
 class MockStoreIndexerWithoutLeaf extends StoreIndexer {
@@ -429,6 +439,41 @@ describe('VuexHoverProvider rootState/rootGetters', () => {
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('State: others/language'), 'Hover should include full namespaced state path');
         assert.ok(md.includes('/mock/workspace/src/store/modules/others.js'), 'Hover should resolve to namespaced state file');
+    });
+});
+
+describe('VuexHoverProvider internal getters access', () => {
+    it('should show hover for local getter in store module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `const g = (state, getters) => { return getters.isActive }`;
+        const char = text.indexOf('getters.isActive') + 'getters.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for internal getters access');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: isActive'), 'Hover should include getter label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local getter definition');
+    });
+
+    it('should not show hover for shadowed local getters variable in store file', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function helper() { const getters = cache; return getters.isActive }`;
+        const char = text.indexOf('getters.isActive') + 'getters.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Shadowed local getters variable should not resolve to Vuex hover');
+    });
+
+    it('should not show hover for bare getters access in non-store file', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `<script>\nconst x = getters.isActive\n</script>`;
+        const char = text.split('\n')[1].indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Non-store file should not resolve bare getters hover');
     });
 });
 
