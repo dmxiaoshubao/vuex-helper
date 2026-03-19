@@ -87,6 +87,7 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+        const currentAssetNamespace = this.storeIndexer.getAssetNamespace(document.fileName) ?? currentNamespace;
 
         // 2. Local State Definition (state.xxx)
         // Check if preceding text ends with "state."
@@ -184,19 +185,19 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         // 2c-2. 内部 getters.xxx 跳转（排除 rootGetters）
         if (
-            currentNamespace &&
+            currentAssetNamespace &&
             /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
             hasParamBindingMemberAccess(document, position, 'getters', currentNamespace)
         ) {
-             return this.findDefinition(word, 'getter', currentNamespace.join('/'));
+             return this.findDefinition(word, 'getter', currentAssetNamespace.join('/'));
         }
 
         if (
-            currentNamespace &&
+            currentAssetNamespace &&
             contextGettersAccessPath &&
             hasParamContextMemberAccess(document, position, 'getters', currentNamespace)
         ) {
-             return this.findDefinition(contextGettersAccessPath, 'getter', undefined, currentNamespace);
+             return this.findDefinition(contextGettersAccessPath, 'getter', undefined, currentAssetNamespace);
         }
 
         // 2d. this.$store.state.xxx.yyy / this.$store?.getters.xxx — 通用链式访问（含可选链）
@@ -288,7 +289,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                     return this.findDefinition(nameFromPath, scopedContext.type, namespaceFromPath, currentNamespace, preferLocalFromContext);
                 }
             }
-            return this.findDefinition(word, scopedContext.type, scopedContext.namespace, currentNamespace, preferLocalFromContext);
+            const lookupNamespace = scopedContext.type === 'state'
+                ? currentNamespace
+                : currentAssetNamespace;
+            return this.findDefinition(word, scopedContext.type, scopedContext.namespace, lookupNamespace, preferLocalFromContext);
         }
 
         return undefined;

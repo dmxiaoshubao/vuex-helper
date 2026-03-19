@@ -81,6 +81,47 @@ class MockStoreIndexerWithoutLeaf extends StoreIndexer {
     }
 }
 
+class InheritedNamespaceMockStoreIndexer extends StoreIndexer {
+    constructor() { super('/mock/workspace'); }
+
+    getStoreMap() {
+        const mkLoc = (file: string, line: number = 0) => new (vscode as any).Location((vscode as any).Uri.file(file), new (vscode as any).Position(line, 0));
+        return {
+            state: [
+                { name: 'name', modulePath: ['account', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 10) }
+            ],
+            getters: [
+                { name: 'fullName', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 20) },
+                { name: 'readyLabel', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 5) },
+                { name: 'readyLabel', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 40) }
+            ],
+            mutations: [
+                { name: 'SET_NAME', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 30) },
+                { name: 'SET_READY', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 15) },
+                { name: 'ROOT_ONLY', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 50) }
+            ],
+            actions: [
+                { name: 'rename', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 35) },
+                { name: 'loadAccount', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 18) }
+            ]
+        } as any;
+    }
+
+    getNamespace(filePath: string) {
+        if (filePath.includes('/src/store/modules/account/profile')) {
+            return ['account', 'profile'];
+        }
+        return undefined;
+    }
+
+    getAssetNamespace(filePath: string) {
+        if (filePath.includes('/src/store/modules/account/profile')) {
+            return ['account'];
+        }
+        return undefined;
+    }
+}
+
 function createDocument(text: string, fileName: string) {
     const lines = text.split('\n');
     return {
@@ -335,6 +376,18 @@ export default {
 
         const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
         assert.strictEqual(definition, undefined, 'Non-store ctx.commit should not resolve as Vuex');
+    });
+
+    it('should prefer inherited asset namespace mutation for direct context.commit in non-namespaced child module', async () => {
+        const provider = new VuexDefinitionProvider(new InheritedNamespaceMockStoreIndexer());
+        const text = `function action(ctx) { ctx.commit('SET_READY') }`;
+        const char = text.indexOf('SET_READY') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/account/profile.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for inherited namespace ctx.commit');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/account/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 15);
     });
 
     it('should not leak bare commit definition across sibling action scopes', async () => {
@@ -1029,5 +1082,17 @@ describe('VuexDefinitionProvider internal getters access', () => {
         assert.ok(definition, 'Definition should be resolved for context.getters');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should resolve inherited namespace parent getter for context.getters in non-namespaced child module', async () => {
+        const provider = new VuexDefinitionProvider(new InheritedNamespaceMockStoreIndexer());
+        const text = `function action(context) { return context.getters.readyLabel }`;
+        const char = text.indexOf('readyLabel') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/account/profile.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for inherited namespace getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/account/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 5);
     });
 });

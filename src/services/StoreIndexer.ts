@@ -154,7 +154,13 @@ export class StoreIndexer {
         this.storeMap = null;
         this.lastStoreEntryPath = null;
         this.indexingPromise = null;
+        this.rerunRequested = false;
+        this.rerunInteractive = false;
+        this.rerunForceFull = false;
         this.rerunChangedFiles.clear();
+        if ('dispose' in this.storeParser && typeof this.storeParser.dispose === 'function') {
+            this.storeParser.dispose();
+        }
         this.clearIndexes();
     }
 
@@ -343,5 +349,9 @@ export class StoreIndexer {
 
     public getNamespace(filePath: string): string[] | undefined {
         return this.storeParser.getNamespace(filePath);
+    }
+
+    public getAssetNamespace(filePath: string): string[] | undefined {
+        return this.storeParser.getAssetNamespace(filePath);
     }
 }

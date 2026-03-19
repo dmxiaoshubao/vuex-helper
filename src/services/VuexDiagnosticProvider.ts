@@ -115,22 +115,32 @@ export class VuexDiagnosticProvider {
 
         const { content, offset: scriptOffset } = scriptText;
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+        const currentAssetNamespace = this.storeIndexer.getAssetNamespace(document.fileName) ?? currentNamespace;
+        const storeScopeNamespace = currentNamespace ?? currentAssetNamespace;
         const refs: DiagnosableRef[] = [];
         const ast = this.parseScriptAst(content);
         const allowLooseStoreFileFallback =
-            currentNamespace !== undefined && !hasExplicitVuexStoreStructure(ast);
+            storeScopeNamespace !== undefined && !hasExplicitVuexStoreStructure(ast);
 
         if (ast) {
             this.scanMapHelpersAst(ast, scriptOffset, document, currentNamespace, refs);
-            this.scanCommitDispatchAst(ast, scriptOffset, document, currentNamespace, refs, allowLooseStoreFileFallback);
+            this.scanCommitDispatchAst(ast, scriptOffset, document, currentAssetNamespace, refs, allowLooseStoreFileFallback);
         } else {
             this.scanMapHelpers(content, scriptOffset, document, currentNamespace, refs);
-            this.scanCommitDispatch(content, scriptOffset, document, currentNamespace, refs);
+            this.scanCommitDispatch(content, scriptOffset, document, currentAssetNamespace, refs);
         }
         this.scanStoreBracketAccess(content, scriptOffset, document, refs);
         this.scanStoreDotChain(content, scriptOffset, document, refs);
         if (ast) {
-            this.scanParamContextAccessAst(ast, scriptOffset, document, currentNamespace, refs, allowLooseStoreFileFallback);
+            this.scanParamContextAccessAst(
+                ast,
+                scriptOffset,
+                document,
+                currentNamespace,
+                currentAssetNamespace,
+                refs,
+                allowLooseStoreFileFallback,
+            );
         } else {
             this.scanRootStateGetters(content, scriptOffset, document, refs);
         }
@@ -139,7 +149,9 @@ export class VuexDiagnosticProvider {
         if (currentNamespace !== undefined) {
             if (!ast) {
                 this.scanInternalStateAccess(content, scriptOffset, document, currentNamespace, refs);
-                this.scanInternalGettersAccess(content, scriptOffset, document, currentNamespace, refs);
+                if (currentAssetNamespace) {
+                    this.scanInternalGettersAccess(content, scriptOffset, document, currentAssetNamespace, refs);
+                }
             }
         }
 
@@ -483,9 +495,11 @@ export class VuexDiagnosticProvider {
         scriptOffset: number,
         document: vscode.TextDocument,
         currentNamespace: string[] | undefined,
+        currentAssetNamespace: string[] | undefined,
         refs: DiagnosableRef[],
         allowLooseStoreFileFallback: boolean,
     ): void {
+        const storeScopeNamespace = currentNamespace ?? currentAssetNamespace;
         const getIdentifierChain = (node: t.Node | null | undefined): string[] | undefined => {
             if (!node) return undefined;
             if (node.type === 'Identifier') {
@@ -550,7 +564,7 @@ export class VuexDiagnosticProvider {
                     isLikelyVuexSpecialParamBinding(
                         binding,
                         objectChain[0],
-                        currentNamespace,
+                        storeScopeNamespace,
                         allowLooseStoreFileFallback,
                     )
                 ) {
@@ -568,7 +582,7 @@ export class VuexDiagnosticProvider {
                     const keyword = objectChain[1];
                     if (
                         (keyword === 'rootState' || keyword === 'rootGetters') &&
-                        isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+                        isLikelyVuexContextBinding(binding, storeScopeNamespace, allowLooseStoreFileFallback)
                     ) {
                         pushRef(
                             node.property.value,
@@ -592,13 +606,14 @@ export class VuexDiagnosticProvider {
                 isLikelyVuexSpecialParamBinding(
                     binding,
                     directKeyword,
-                    currentNamespace,
+                    storeScopeNamespace,
                     allowLooseStoreFileFallback,
                 )
             ) {
-                if (currentNamespace === undefined) return;
+                const targetNamespace = directKeyword === 'state' ? currentNamespace : currentAssetNamespace;
+                if (targetNamespace === undefined) return;
                 const accessPath = [...objectChain.slice(1), node.property.name].join('.');
-                pushRef(accessPath, directKeyword === 'state' ? 'state' : 'getter', node.property, true, currentNamespace);
+                pushRef(accessPath, directKeyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
                 return;
             }
 
@@ -607,7 +622,7 @@ export class VuexDiagnosticProvider {
                 isLikelyVuexSpecialParamBinding(
                     binding,
                     directKeyword,
-                    currentNamespace,
+                    storeScopeNamespace,
                     allowLooseStoreFileFallback,
                 )
             ) {
@@ -616,21 +631,23 @@ export class VuexDiagnosticProvider {
                 return;
             }
 
-            if (objectChain.length < 2 || currentNamespace === undefined) return;
+            if (objectChain.length < 2 || storeScopeNamespace === undefined) return;
 
             const keyword = objectChain[1];
             if (
                 (keyword === 'state' || keyword === 'getters') &&
-                isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+                isLikelyVuexContextBinding(binding, storeScopeNamespace, allowLooseStoreFileFallback)
             ) {
+                const targetNamespace = keyword === 'state' ? currentNamespace : currentAssetNamespace;
+                if (targetNamespace === undefined) return;
                 const accessPath = [...objectChain.slice(2), node.property.name].join('.');
-                pushRef(accessPath, keyword === 'state' ? 'state' : 'getter', node.property, true, currentNamespace);
+                pushRef(accessPath, keyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
                 return;
             }
 
             if (
                 (keyword === 'rootState' || keyword === 'rootGetters') &&
-                isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+                isLikelyVuexContextBinding(binding, storeScopeNamespace, allowLooseStoreFileFallback)
             ) {
                 const accessPath = [...objectChain.slice(2), node.property.name].join('.');
                 pushRef(accessPath, keyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);

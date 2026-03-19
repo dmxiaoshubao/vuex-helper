@@ -71,6 +71,7 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
 
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+        const currentAssetNamespace = this.storeIndexer.getAssetNamespace(document.fileName) ?? currentNamespace;
         const validatedContext =
             context &&
             (context.method !== 'commit' && context.method !== 'dispatch' ||
@@ -146,19 +147,19 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
 
         if (
-            currentNamespace &&
+            currentAssetNamespace &&
             /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
             hasParamBindingMemberAccess(document, position, 'getters', currentNamespace)
         ) {
-             return this.findHover(word, 'getter', currentNamespace.join('/'));
+             return this.findHover(word, 'getter', currentAssetNamespace.join('/'));
         }
 
         if (
-            currentNamespace &&
+            currentAssetNamespace &&
             contextGettersAccessPath &&
             hasParamContextMemberAccess(document, position, 'getters', currentNamespace)
         ) {
-             return this.findHover(contextGettersAccessPath, 'getter', undefined, currentNamespace);
+             return this.findHover(contextGettersAccessPath, 'getter', undefined, currentAssetNamespace);
         }
 
         // 3d. this.$store.state.xxx / this.$store?.getters?.xxx hover
@@ -186,7 +187,10 @@ export class VuexHoverProvider implements vscode.HoverProvider {
              if (validatedContext.type === 'state' && stateAccessPath) {
                  return this.findHover(stateAccessPath, 'state', validatedContext.namespace, currentNamespace, preferLocalFromContext);
              }
-             return this.findHover(word, validatedContext.type, validatedContext.namespace, currentNamespace, preferLocalFromContext);
+             const lookupNamespace = validatedContext.type === 'state'
+                 ? currentNamespace
+                 : currentAssetNamespace;
+             return this.findHover(word, validatedContext.type, validatedContext.namespace, lookupNamespace, preferLocalFromContext);
         }
 
         return undefined;

@@ -107,6 +107,40 @@ class MockCommitHoverStoreIndexer extends StoreIndexer {
     }
 }
 
+class InheritedNamespaceHoverStoreIndexer extends StoreIndexer {
+    constructor() { super('/mock/workspace'); }
+
+    getStoreMap() {
+        const mkLoc = (file: string, line: number = 0) => new (vscode as any).Location((vscode as any).Uri.file(file), new (vscode as any).Position(line, 0));
+        return {
+            state: [
+                { name: 'name', modulePath: ['account', 'profile'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 10), displayType: 'string' }
+            ],
+            getters: [
+                { name: 'fullName', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 20) },
+                { name: 'readyLabel', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 5) },
+                { name: 'readyLabel', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 40) }
+            ],
+            mutations: [],
+            actions: []
+        } as any;
+    }
+
+    getNamespace(filePath: string) {
+        if (filePath.includes('/src/store/modules/account/profile')) {
+            return ['account', 'profile'];
+        }
+        return undefined;
+    }
+
+    getAssetNamespace(filePath: string) {
+        if (filePath.includes('/src/store/modules/account/profile')) {
+            return ['account'];
+        }
+        return undefined;
+    }
+}
+
 function createDocument(text: string, fileName: string) {
     const lines = text.split('\n');
     return {
@@ -600,6 +634,19 @@ describe('VuexHoverProvider internal getters access', () => {
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('Getter: isActive'), 'Hover should include getter label');
         assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local getter definition');
+    });
+
+    it('should show hover for inherited namespace parent getter in non-namespaced child module', async () => {
+        const provider = new VuexHoverProvider(new InheritedNamespaceHoverStoreIndexer());
+        const text = `function action(context) { return context.getters.readyLabel }`;
+        const char = text.indexOf('readyLabel') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/account/profile.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for inherited namespace getter');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: readyLabel'), 'Hover should include inherited getter label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/account/index.js'), 'Hover should resolve to parent getter definition within inherited namespace');
     });
 });
 

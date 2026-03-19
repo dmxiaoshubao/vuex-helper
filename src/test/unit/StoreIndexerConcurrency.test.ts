@@ -1,6 +1,10 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { StoreIndexer } from '../../services/StoreIndexer';
+import { StoreParser } from '../../services/StoreParser';
 
 describe('StoreIndexer Concurrency', () => {
     it('should coalesce concurrent indexing into at most one rerun', async () => {
@@ -75,12 +79,14 @@ describe('StoreIndexer Concurrency', () => {
 
     it('should clear all state after dispose', async () => {
         const indexer = new StoreIndexer('/tmp') as any;
+        let parserDisposed = false;
 
         indexer.entryAnalyzer = {
             analyze: async () => '/tmp/store.js'
         };
         indexer.storeParser = {
-            parse: async () => ({ state: [{ name: 'x', modulePath: [], defLocation: {} as any }], getters: [], mutations: [], actions: [] })
+            parse: async () => ({ state: [{ name: 'x', modulePath: [], defLocation: {} as any }], getters: [], mutations: [], actions: [] }),
+            dispose: () => { parserDisposed = true; },
         };
 
         await indexer.index();
@@ -90,6 +96,7 @@ describe('StoreIndexer Concurrency', () => {
         assert.strictEqual(indexer.getStoreMap(), null, 'storeMap should be null after dispose');
         assert.strictEqual(indexer.lastStoreEntryPath, null, 'lastStoreEntryPath should be null after dispose');
         assert.strictEqual(indexer.indexingPromise, null, 'indexingPromise should be null after dispose');
+        assert.strictEqual(parserDisposed, true, 'dispose should cascade to store parser');
     });
 
     it('should skip reindex for unrelated files after store is indexed', () => {
@@ -152,5 +159,44 @@ describe('StoreIndexer Concurrency', () => {
 
         await indexer.index({ changedFiles: ['/tmp/src/store/modules/new-module.js'] });
         assert.strictEqual(parseCalls[0], undefined, 'Unindexed change should trigger full parse');
+    });
+
+    it('should clear parser namespace caches after dispose', async () => {
+        const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'vuex-helper-dispose-')));
+        fs.mkdirSync(path.join(tmpDir, 'src', 'store', 'modules'), { recursive: true });
+        const entryPath = path.join(tmpDir, 'src', 'store', 'index.js');
+        const userPath = path.join(tmpDir, 'src', 'store', 'modules', 'user.js');
+
+        fs.writeFileSync(entryPath, `
+            import Vue from 'vue';
+            import Vuex from 'vuex';
+            import user from './modules/user.js';
+            Vue.use(Vuex);
+            export default new Vuex.Store({
+              modules: { user }
+            });
+        `);
+        fs.writeFileSync(userPath, `
+            export default {
+              namespaced: true,
+              state: { name: 'guest' },
+            };
+        `);
+
+        try {
+            const parser = new StoreParser(tmpDir);
+            await parser.parse(entryPath);
+
+            assert.deepStrictEqual(parser.getNamespace(userPath), ['user'], 'Parser should track structural namespace before dispose');
+            assert.deepStrictEqual(parser.getAssetNamespace(userPath), ['user'], 'Parser should track asset namespace before dispose');
+
+            parser.dispose();
+
+            assert.strictEqual(parser.getNamespace(userPath), undefined, 'Parser structural namespace cache should be cleared on dispose');
+            assert.strictEqual(parser.getAssetNamespace(userPath), undefined, 'Parser asset namespace cache should be cleared on dispose');
+            assert.deepStrictEqual(parser.getAffectedFiles([userPath]), [], 'Dependency graph should be cleared on dispose');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
     });
 });

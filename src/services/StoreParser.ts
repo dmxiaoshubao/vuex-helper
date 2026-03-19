@@ -27,6 +27,8 @@ export class StoreParser {
         actions: []
     };
     private fileNamespaceMap: Map<string, string[]> = new Map();
+    private fileInheritedAssetNamespaceMap: Map<string, string[]> = new Map();
+    private fileAssetNamespaceMap: Map<string, string[]> = new Map();
     private visitedModuleScope: Set<string> = new Set();
     private fileDependencyMap: Map<string, Set<string>> = new Map();
     private reverseDependencyMap: Map<string, Set<string>> = new Map();
@@ -49,7 +51,7 @@ export class StoreParser {
         if (!canIncremental) {
             this.resetAllIndexState();
             this.pathResolver.clearCache();
-            await this.parseModule(storeEntryPath, [], {});
+            await this.parseModule(storeEntryPath, [], {}, []);
             this.lastStoreEntryPath = normalizedEntry;
             return this.storeMap;
         }
@@ -60,6 +62,7 @@ export class StoreParser {
         }
 
         const namespaceSnapshot = new Map(this.fileNamespaceMap);
+        const inheritedAssetNamespaceSnapshot = new Map(this.fileInheritedAssetNamespaceMap);
         this.prepareIncrementalState(affectedFiles);
 
         const parseContext: ParseContext = {
@@ -69,7 +72,8 @@ export class StoreParser {
 
         for (const affectedFile of affectedFiles) {
             const namespace = namespaceSnapshot.get(affectedFile) || [];
-            await this.parseModule(affectedFile, namespace, parseContext);
+            const inheritedAssetNamespace = inheritedAssetNamespaceSnapshot.get(affectedFile) || [];
+            await this.parseModule(affectedFile, namespace, parseContext, inheritedAssetNamespace);
         }
 
         this.pruneUnreachableFiles(normalizedEntry);
@@ -77,7 +81,12 @@ export class StoreParser {
         return this.storeMap;
     }
 
-    private async parseModule(filePath: string, moduleNamespace: string[], context: ParseContext): Promise<void> {
+    private async parseModule(
+        filePath: string,
+        moduleNamespace: string[],
+        context: ParseContext,
+        inheritedAssetNamespace: string[],
+    ): Promise<void> {
         const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
         const normalizedPath = vscode.Uri.file(filePath).fsPath;
 
@@ -103,6 +112,7 @@ export class StoreParser {
         this.visitedModuleScope.add(visitKey);
 
         this.fileNamespaceMap.set(normalizedPath, moduleNamespace);
+        this.fileInheritedAssetNamespaceMap.set(normalizedPath, [...inheritedAssetNamespace]);
         const directDependencies = new Set<string>();
 
         try {
@@ -114,16 +124,36 @@ export class StoreParser {
 
             const { imports, localVars, exportedStoreObject, dynamicRegistrations } = await this.collectDeclarations(ast, filePath);
 
+            let currentAssetNamespace = [...inheritedAssetNamespace];
             if (exportedStoreObject) {
-                await this.processStoreObject(exportedStoreObject, filePath, moduleNamespace, imports, localVars, directDependencies, context);
+                currentAssetNamespace = this.computeAssetNamespace(
+                    moduleNamespace,
+                    inheritedAssetNamespace,
+                    exportedStoreObject,
+                    localVars,
+                );
+                this.fileAssetNamespaceMap.set(normalizedPath, currentAssetNamespace);
+                await this.processStoreObject(
+                    exportedStoreObject,
+                    filePath,
+                    moduleNamespace,
+                    currentAssetNamespace,
+                    imports,
+                    localVars,
+                    directDependencies,
+                    context,
+                );
             }
 
             // 处理动态模块注册（namespace 需拼接 baseNamespace）
             for (const registration of dynamicRegistrations) {
+                const dynamicInheritedAssetNamespace = registration.namespace.length > 1
+                    ? [...currentAssetNamespace, ...registration.namespace.slice(0, -1)]
+                    : currentAssetNamespace;
                 await this.processModuleReference(
                     registration.moduleNode, filePath,
                     [...moduleNamespace, ...registration.namespace],
-                    imports, localVars, directDependencies, context
+                    imports, localVars, directDependencies, context, dynamicInheritedAssetNamespace
                 );
             }
         } catch (error) {
@@ -444,14 +474,12 @@ export class StoreParser {
         objExpression: t.Node,
         filePath: string,
         moduleNamespace: string[],
+        assetNamespace: string[],
         imports: Record<string, string>,
         localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
         context: ParseContext
     ): Promise<void> {
-        const isNamespaced = this.readNamespacedFlag(objExpression, localVars);
-        const assetNamespace = moduleNamespace.length > 0 && isNamespaced ? moduleNamespace : [];
-
         for (const prop of (objExpression as t.ObjectExpression).properties) {
             if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
 
@@ -469,9 +497,32 @@ export class StoreParser {
             } else if (keyName === 'actions') {
                 this.processActions(valueNode, filePath, assetNamespace, localVars);
             } else if (keyName === 'modules') {
-                await this.processModules(valueNode, filePath, moduleNamespace, imports, localVars, directDependencies, context);
+                await this.processModules(
+                    valueNode,
+                    filePath,
+                    moduleNamespace,
+                    assetNamespace,
+                    imports,
+                    localVars,
+                    directDependencies,
+                    context,
+                );
             }
         }
+    }
+
+    private computeAssetNamespace(
+        moduleNamespace: string[],
+        inheritedAssetNamespace: string[],
+        objExpression: t.Node,
+        localVars: Record<string, t.Node | null | undefined>,
+    ): string[] {
+        if (moduleNamespace.length === 0) return [];
+        if (!this.readNamespacedFlag(objExpression, localVars)) {
+            return [...inheritedAssetNamespace];
+        }
+        const currentKey = moduleNamespace[moduleNamespace.length - 1];
+        return [...inheritedAssetNamespace, currentKey];
     }
 
     private readNamespacedFlag(objExpression: t.Node, localVars: Record<string, t.Node | null | undefined>): boolean {
@@ -632,7 +683,91 @@ export class StoreParser {
     }
 
     private processActions(valueNode: t.Node | null | undefined, filePath: string, namespace: string[], localVars: Record<string, t.Node | null | undefined>): void {
-        this.processFunctionCollection(valueNode, filePath, namespace, localVars, this.storeMap.actions);
+        if (!valueNode) return;
+
+        const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
+        if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
+
+        (resolvedValue as t.ObjectExpression).properties.forEach((property) => {
+            if (property.type !== 'ObjectProperty' && property.type !== 'ObjectMethod') return;
+
+            const keyName = this.getPropertyKeyName(property, localVars);
+            const loc = this.getPropertyLocation(property);
+            if (!keyName || !loc) return;
+
+            this.storeMap.actions.push({
+                name: keyName,
+                defLocation: new vscode.Location(
+                    vscode.Uri.file(filePath),
+                    new vscode.Position(loc.start.line - 1, loc.start.column)
+                ),
+                modulePath: this.resolveActionNamespace(property, namespace, localVars),
+                documentation: this.extractDocumentation(property)
+            });
+        });
+    }
+
+    private resolveActionNamespace(
+        property: t.ObjectProperty | t.ObjectMethod,
+        namespace: string[],
+        localVars: Record<string, t.Node | null | undefined>,
+    ): string[] {
+        if (property.type === 'ObjectMethod') {
+            return namespace;
+        }
+
+        const actionValue = this.resolveNode(property.value, localVars, 0, new Set());
+        if (!actionValue || actionValue.type !== 'ObjectExpression') {
+            return namespace;
+        }
+
+        const isRootAction = this.readBooleanProperty(actionValue, 'root', localVars);
+        if (!isRootAction) {
+            return namespace;
+        }
+
+        const handlerNode = this.getNamedPropertyValue(actionValue, 'handler', localVars);
+        if (!handlerNode || !this.isCallableNode(handlerNode)) {
+            return namespace;
+        }
+
+        return [];
+    }
+
+    private readBooleanProperty(
+        objExpression: t.ObjectExpression,
+        keyName: string,
+        localVars: Record<string, t.Node | null | undefined>,
+    ): boolean {
+        for (const prop of objExpression.properties) {
+            if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
+            if (this.getPropertyKeyName(prop, localVars) !== keyName) continue;
+            const valueNode = this.getPropertyValueNode(prop, localVars);
+            const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
+            return !!(resolvedValue && resolvedValue.type === 'BooleanLiteral' && resolvedValue.value === true);
+        }
+        return false;
+    }
+
+    private getNamedPropertyValue(
+        objExpression: t.ObjectExpression,
+        keyName: string,
+        localVars: Record<string, t.Node | null | undefined>,
+    ): t.Node | null | undefined {
+        for (const prop of objExpression.properties) {
+            if (prop.type !== 'ObjectProperty' && prop.type !== 'ObjectMethod') continue;
+            if (this.getPropertyKeyName(prop, localVars) !== keyName) continue;
+            return this.getPropertyValueNode(prop, localVars);
+        }
+        return undefined;
+    }
+
+    private isCallableNode(node: t.Node | null | undefined): boolean {
+        if (!node) return false;
+        return node.type === 'FunctionExpression'
+            || node.type === 'ArrowFunctionExpression'
+            || node.type === 'FunctionDeclaration'
+            || node.type === 'ObjectMethod';
     }
 
     private processFunctionCollection(
@@ -670,6 +805,7 @@ export class StoreParser {
         valueNode: t.Node | null | undefined,
         filePath: string,
         namespace: string[],
+        inheritedAssetNamespace: string[],
         imports: Record<string, string>,
         localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
@@ -680,13 +816,23 @@ export class StoreParser {
         const resolvedValue = this.resolveNode(valueNode, localVars, 0, new Set());
         if (!resolvedValue || resolvedValue.type !== 'ObjectExpression') return;
 
-        await this.processModulesObjectExpression(resolvedValue, filePath, namespace, imports, localVars, directDependencies, context);
+        await this.processModulesObjectExpression(
+            resolvedValue,
+            filePath,
+            namespace,
+            inheritedAssetNamespace,
+            imports,
+            localVars,
+            directDependencies,
+            context,
+        );
     }
 
     private async processModulesObjectExpression(
         modulesObject: t.Node,
         filePath: string,
         namespace: string[],
+        inheritedAssetNamespace: string[],
         imports: Record<string, string>,
         localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
@@ -698,7 +844,16 @@ export class StoreParser {
             if (property.type === 'SpreadElement') {
                 const spreadValue = this.resolveNode(property.argument, localVars, 0, new Set());
                 if (spreadValue && spreadValue.type === 'ObjectExpression') {
-                    await this.processModulesObjectExpression(spreadValue, filePath, namespace, imports, localVars, directDependencies, context);
+                    await this.processModulesObjectExpression(
+                        spreadValue,
+                        filePath,
+                        namespace,
+                        inheritedAssetNamespace,
+                        imports,
+                        localVars,
+                        directDependencies,
+                        context,
+                    );
                 }
                 continue;
             }
@@ -709,7 +864,16 @@ export class StoreParser {
             if (!moduleName) continue;
 
             const newNamespace = [...namespace, moduleName];
-            await this.processModuleReference(property.value, filePath, newNamespace, imports, localVars, directDependencies, context);
+            await this.processModuleReference(
+                property.value,
+                filePath,
+                newNamespace,
+                imports,
+                localVars,
+                directDependencies,
+                context,
+                inheritedAssetNamespace,
+            );
         }
     }
 
@@ -720,13 +884,24 @@ export class StoreParser {
         imports: Record<string, string>,
         localVars: Record<string, t.Node | null | undefined>,
         directDependencies: Set<string>,
-        context: ParseContext
+        context: ParseContext,
+        inheritedAssetNamespace: string[],
     ): Promise<void> {
         const resolvedModule = this.resolveNode(moduleNode, localVars, 0, new Set());
         if (!resolvedModule) return;
 
         if (resolvedModule.type === 'ObjectExpression') {
-            await this.processStoreObject(resolvedModule, filePath, namespace, imports, localVars, directDependencies, context);
+            const assetNamespace = this.computeAssetNamespace(namespace, inheritedAssetNamespace, resolvedModule, localVars);
+            await this.processStoreObject(
+                resolvedModule,
+                filePath,
+                namespace,
+                assetNamespace,
+                imports,
+                localVars,
+                directDependencies,
+                context,
+            );
             return;
         }
 
@@ -734,13 +909,23 @@ export class StoreParser {
             const importedPath = await this.resolveImportedModulePath(resolvedModule.name, imports, localVars, filePath);
             if (importedPath) {
                 directDependencies.add(vscode.Uri.file(importedPath).fsPath);
-                await this.parseModule(importedPath, namespace, context);
+                await this.parseModule(importedPath, namespace, context, inheritedAssetNamespace);
                 return;
             }
 
             const resolvedLocalValue = this.resolveNode(localVars[resolvedModule.name], localVars, 0, new Set());
             if (resolvedLocalValue && resolvedLocalValue.type === 'ObjectExpression') {
-                await this.processStoreObject(resolvedLocalValue, filePath, namespace, imports, localVars, directDependencies, context);
+                const assetNamespace = this.computeAssetNamespace(namespace, inheritedAssetNamespace, resolvedLocalValue, localVars);
+                await this.processStoreObject(
+                    resolvedLocalValue,
+                    filePath,
+                    namespace,
+                    assetNamespace,
+                    imports,
+                    localVars,
+                    directDependencies,
+                    context,
+                );
             }
             return;
         }
@@ -748,7 +933,7 @@ export class StoreParser {
         const dynamicPath = await this.resolveModulePathFromNode(resolvedModule, localVars, filePath);
         if (dynamicPath) {
             directDependencies.add(vscode.Uri.file(dynamicPath).fsPath);
-            await this.parseModule(dynamicPath, namespace, context);
+            await this.parseModule(dynamicPath, namespace, context, inheritedAssetNamespace);
         }
     }
 
@@ -804,6 +989,8 @@ export class StoreParser {
     private resetAllIndexState(): void {
         this.storeMap = { state: [], getters: [], mutations: [], actions: [] };
         this.fileNamespaceMap.clear();
+        this.fileInheritedAssetNamespaceMap.clear();
+        this.fileAssetNamespaceMap.clear();
         this.visitedModuleScope.clear();
         this.fileDependencyMap.clear();
         this.reverseDependencyMap.clear();
@@ -813,6 +1000,8 @@ export class StoreParser {
         this.storeMap = this.filterStoreMapExcludingFiles(affectedFiles);
         for (const file of affectedFiles) {
             this.fileNamespaceMap.delete(file);
+            this.fileInheritedAssetNamespaceMap.delete(file);
+            this.fileAssetNamespaceMap.delete(file);
             this.clearDependenciesForFile(file);
         }
         this.visitedModuleScope.clear();
@@ -871,6 +1060,8 @@ export class StoreParser {
         this.storeMap = this.filterStoreMapExcludingFiles(unreachableSet);
         for (const file of unreachableSet) {
             this.fileNamespaceMap.delete(file);
+            this.fileInheritedAssetNamespaceMap.delete(file);
+            this.fileAssetNamespaceMap.delete(file);
             this.clearDependenciesForFile(file);
         }
     }
@@ -922,6 +1113,17 @@ export class StoreParser {
     public getNamespace(filePath: string): string[] | undefined {
         const normalizedPath = vscode.Uri.file(filePath).fsPath;
         return this.fileNamespaceMap.get(normalizedPath);
+    }
+
+    public dispose(): void {
+        this.resetAllIndexState();
+        this.pathResolver.clearCache();
+        this.lastStoreEntryPath = null;
+    }
+
+    public getAssetNamespace(filePath: string): string[] | undefined {
+        const normalizedPath = vscode.Uri.file(filePath).fsPath;
+        return this.fileAssetNamespaceMap.get(normalizedPath);
     }
 
     public hasIndexedFile(filePath: string): boolean {

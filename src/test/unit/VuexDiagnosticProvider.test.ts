@@ -66,6 +66,44 @@ class DuplicateGetterConflictMockStoreIndexer extends MockStoreIndexer {
     }
 }
 
+class InheritedNamespaceDiagnosticStoreIndexer extends MockStoreIndexer {
+    getStoreMap() {
+        const mkLoc = (file: string, line = 0) =>
+            new vscode.Location(vscode.Uri.file(file), new vscode.Position(line, 0));
+        return {
+            state: [
+                { name: 'name', modulePath: ['account', 'profile'], defLocation: mkLoc('/mock/workspace/store/modules/account/profile.js', 10) },
+            ],
+            getters: [
+                { name: 'fullName', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/profile.js', 20) },
+                { name: 'readyLabel', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/index.js', 5) },
+                { name: 'readyLabel', modulePath: [], defLocation: mkLoc('/mock/workspace/store/index.js', 30) },
+            ],
+            mutations: [
+                { name: 'SET_NAME', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/profile.js', 40) },
+                { name: 'SET_READY', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/index.js', 15) },
+                { name: 'ROOT_ONLY', modulePath: [], defLocation: mkLoc('/mock/workspace/store/index.js', 50) },
+            ],
+            actions: [
+                { name: 'rename', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/profile.js', 45) },
+                { name: 'loadAccount', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/store/modules/account/index.js', 18) },
+            ],
+        } as any;
+    }
+
+    getNamespace(filePath: string) {
+        if (filePath.includes('/store/modules/account/profile')) return ['account', 'profile'];
+        return super.getNamespace(filePath);
+    }
+
+    getAssetNamespace(filePath: string) {
+        if (filePath.includes('/store/modules/account/profile')) return ['account'];
+        return undefined;
+    }
+
+    getStoreEntryPath() { return '/mock/workspace/store/index.js'; }
+}
+
 // ---- createDocument helper ----
 function createDocument(text: string, fileName = '/mock/workspace/src/App.vue') {
     const lines = text.split('\n');
@@ -597,6 +635,50 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
             '/mock/workspace/store/modules/cart.js');
         const diags = provider.diagnose(doc);
         assert.ok(diags.some(d => d.message.includes('nonExistent')), 'Expected warning for invalid context.getters access');
+    });
+});
+
+describe('VuexDiagnosticProvider inherited namespace access', () => {
+    it('should not warn for inherited namespace context.getters access in non-namespaced child module', () => {
+        const provider = new VuexDiagnosticProvider(new InheritedNamespaceDiagnosticStoreIndexer());
+        const doc = createDocument(`export default {
+  actions: {
+    test(context) {
+      return context.getters.readyLabel
+    }
+  }
+}`, '/mock/workspace/store/modules/account/profile.js');
+
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should warn for missing inherited namespace getter in non-namespaced child module', () => {
+        const provider = new VuexDiagnosticProvider(new InheritedNamespaceDiagnosticStoreIndexer());
+        const doc = createDocument(`export default {
+  actions: {
+    test(context) {
+      return context.getters.missingGetter
+    }
+  }
+}`, '/mock/workspace/store/modules/account/profile.js');
+
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('missingGetter')), 'Expected warning for missing inherited namespace getter');
+    });
+
+    it('should not warn for inherited namespace bare commit in non-namespaced child module', () => {
+        const provider = new VuexDiagnosticProvider(new InheritedNamespaceDiagnosticStoreIndexer());
+        const doc = createDocument(`export default {
+  actions: {
+    test({ commit }) {
+      commit('SET_READY')
+    }
+  }
+}`, '/mock/workspace/store/modules/account/profile.js');
+
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
 });
 

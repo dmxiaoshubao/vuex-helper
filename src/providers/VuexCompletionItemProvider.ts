@@ -42,6 +42,8 @@ export class VuexCompletionItemProvider
     }
 
     const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+    const currentAssetNamespace =
+      this.storeIndexer.getAssetNamespace(document.fileName) ?? currentNamespace;
     const storeLikeNames = await this.getStoreLikeNames(document);
     const storeLikeNameSet = new Set(storeLikeNames);
 
@@ -136,7 +138,7 @@ export class VuexCompletionItemProvider
           const ns = scopedVuexContext.namespace;
           items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, ns);
         } else if (
-          currentNamespace &&
+          currentAssetNamespace &&
           itemType &&
           (scopedVuexContext.type === "mutation" || scopedVuexContext.type === "action") &&
           !scopedVuexContext.isStoreMethod &&
@@ -145,7 +147,7 @@ export class VuexCompletionItemProvider
         ) {
           // If inside a module, scoped completion for commit/dispatch
           // Filter to only current module items (Strict scoping as per user request)
-          const nsJoined = currentNamespace.join("/");
+          const nsJoined = currentAssetNamespace.join("/");
           items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, nsJoined);
         }
       }
@@ -334,10 +336,12 @@ export class VuexCompletionItemProvider
           scopedVuexContext.argumentIndex === 0;
         const isLocalCommitDispatchArg0 =
           isCommitDispatchArg0 && !scopedVuexContext.isStoreMethod && !isRootTrue;
+        const localNamespaceForContext =
+          scopedVuexContext.type === "state" ? currentNamespace : currentAssetNamespace;
         // If inside a module and matches current namespace, use short name
         if (
-          currentNamespace &&
-          item.modulePath.join("/") === currentNamespace.join("/") &&
+          localNamespaceForContext &&
+          item.modulePath.join("/") === localNamespaceForContext.join("/") &&
           (!isCommitDispatchArg0 || isLocalCommitDispatchArg0)
         ) {
           label = item.name;
@@ -1087,6 +1091,7 @@ export class VuexCompletionItemProvider
       // 3b. In-Module Getters Completion (getters.xxx)
       const inModuleGettersMatch = prefix.match(/(?<!\.|root)\bgetters\.([a-zA-Z0-9_$]*)$/);
       if (
+        currentAssetNamespace &&
         inModuleGettersMatch &&
         hasParamBindingMemberAccess(document, position, "getters", currentNamespace, {
           replaceBeforeCursor: inModuleGettersMatch[1]?.length ?? 0,
@@ -1094,7 +1099,7 @@ export class VuexCompletionItemProvider
       ) {
         if (token.isCancellationRequested) return undefined;
         const currentInput = inModuleGettersMatch[1] || "";
-        const nsStr = currentNamespace.join("/");
+        const nsStr = currentAssetNamespace.join("/");
 
         const replacementRange = this.createDotRange(
           position.line,
@@ -1125,6 +1130,7 @@ export class VuexCompletionItemProvider
         /\b[A-Za-z_$][\w$]*\.getters\.([a-zA-Z0-9_$]*)$/,
       );
       if (
+        currentAssetNamespace &&
         contextGettersMatch &&
         hasParamContextMemberAccess(document, position, "getters", currentNamespace, {
           replaceBeforeCursor: contextGettersMatch[1]?.length ?? 0,
@@ -1132,7 +1138,7 @@ export class VuexCompletionItemProvider
       ) {
         if (token.isCancellationRequested) return undefined;
         const currentInput = contextGettersMatch[1] || "";
-        const nsStr = currentNamespace.join("/");
+        const nsStr = currentAssetNamespace.join("/");
 
         const replacementRange = this.createDotRange(
           position.line,

@@ -1972,6 +1972,34 @@ export default {
             getStoreEntryPath() { return null; }
         }
 
+        class InheritedNamespaceStoreIndexer extends StoreIndexer {
+            constructor() { super(''); }
+            getStoreMap() {
+                return {
+                    state: [
+                        { name: 'name', modulePath: ['account', 'profile'], defLocation: {} as any },
+                    ],
+                    getters: [
+                        { name: 'fullName', modulePath: ['account'], defLocation: {} as any },
+                        { name: 'readyLabel', modulePath: ['account'], defLocation: {} as any },
+                        { name: 'isRootGetter', modulePath: [], defLocation: {} as any },
+                    ],
+                    mutations: [
+                        { name: 'SET_NAME', modulePath: ['account'], defLocation: {} as any },
+                        { name: 'SET_READY', modulePath: ['account'], defLocation: {} as any },
+                        { name: 'ROOT_ONLY', modulePath: [], defLocation: {} as any },
+                    ],
+                    actions: [
+                        { name: 'rename', modulePath: ['account'], defLocation: {} as any },
+                        { name: 'loadAccount', modulePath: ['account'], defLocation: {} as any },
+                    ],
+                };
+            }
+            getNamespace() { return ['account', 'profile']; }
+            getAssetNamespace() { return ['account']; }
+            getStoreEntryPath() { return null; }
+        }
+
         function createStoreDocument(text: string) {
             const lines = text.split('\n');
             return {
@@ -2080,6 +2108,36 @@ export default {
             const items = getItems(result);
             const upperNameItem = items.find((i: any) => i.label === 'upperName');
             assert.ok(upperNameItem, 'context.getters should provide local getter completion');
+        });
+
+        it('should provide inherited parent namespace getters for non-namespaced child modules', async () => {
+            const provider = new VuexCompletionItemProvider(new InheritedNamespaceStoreIndexer());
+            const text = `function action(ctx) { ctx.getters. }`;
+            const cursor = text.indexOf('ctx.getters.') + 'ctx.getters.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items.find((i: any) => i.label === 'fullName'), 'Should include child getter in inherited namespace');
+            assert.ok(items.find((i: any) => i.label === 'readyLabel'), 'Should include parent getter in inherited namespace');
+            assert.ok(!items.find((i: any) => i.label === 'isRootGetter'), 'Should not leak unrelated root getter into inherited namespace completion');
+        });
+
+        it('should scope bare commit completion to the inherited asset namespace in non-namespaced child modules', async () => {
+            const provider = new VuexCompletionItemProvider(new InheritedNamespaceStoreIndexer());
+            const text = `function action({ commit }) { commit('') }`;
+            const cursor = text.indexOf(`commit('`) + `commit('`.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items.find((i: any) => i.label === 'SET_NAME'), 'Should include child mutation from inherited namespace');
+            assert.ok(items.find((i: any) => i.label === 'SET_READY'), 'Should include parent mutation from inherited namespace');
+            assert.ok(!items.find((i: any) => i.label === 'ROOT_ONLY'), 'Should not include unrelated root mutation without root:true');
         });
 
         it('should not provide context.state completion in non-store file', async () => {
