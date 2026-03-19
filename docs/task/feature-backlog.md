@@ -35,7 +35,7 @@ store 内部 `getters.xxx` 已支持 completion / definition / diagnostics，hov
 - 目标：补齐 provider 行为一致性。
 - 状态：已完成。
 
-## 5. 非命名空间 getter 冲突诊断
+## 5. 非命名空间 getter 冲突诊断 ✅ 已完成
 Vuex 非 namespaced 模块的 getter 会注册到全局；同名 getter 冲突应尽早暴露。
 
 - 目标：在索引或诊断阶段提示重复 getter 名，降低运行时报错概率。

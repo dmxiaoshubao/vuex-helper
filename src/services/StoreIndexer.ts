@@ -13,6 +13,11 @@ export interface IndexOptions {
 export type VuexItemType = 'state' | 'getter' | 'mutation' | 'action';
 export type VuexAnyItem = VuexStateInfo | VuexGetterInfo | VuexMutationInfo | VuexActionInfo;
 
+export interface VuexGlobalGetterConflict {
+    name: string;
+    items: VuexGetterInfo[];
+}
+
 export class StoreIndexer {
     private workspaceRoot: string;
     private entryAnalyzer: EntryAnalyzer;
@@ -29,6 +34,7 @@ export class StoreIndexer {
     private itemIndexByTypeNamespace: Map<string, VuexAnyItem[]> = new Map();
     private moduleDefinitionIndex: Map<string, vscode.Location> = new Map();
     private moduleNames: Set<string> = new Set();
+    private duplicateGlobalGetterConflicts: VuexGlobalGetterConflict[] = [];
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -170,6 +176,7 @@ export class StoreIndexer {
         this.itemIndexByTypeNamespace.clear();
         this.moduleDefinitionIndex.clear();
         this.moduleNames.clear();
+        this.duplicateGlobalGetterConflicts = [];
     }
 
     private rebuildIndexes(): void {
@@ -204,6 +211,30 @@ export class StoreIndexer {
         indexItems('getter', this.storeMap.getters);
         indexItems('mutation', this.storeMap.mutations);
         indexItems('action', this.storeMap.actions);
+        this.duplicateGlobalGetterConflicts = this.collectDuplicateGlobalGetterConflicts();
+    }
+
+    private collectDuplicateGlobalGetterConflicts(): VuexGlobalGetterConflict[] {
+        if (!this.storeMap) return [];
+
+        const buckets = new Map<string, VuexGetterInfo[]>();
+        for (const getter of this.storeMap.getters) {
+            if (getter.modulePath.length !== 0) continue;
+            const bucket = buckets.get(getter.name);
+            if (bucket) {
+                bucket.push(getter);
+            } else {
+                buckets.set(getter.name, [getter]);
+            }
+        }
+
+        const conflicts: VuexGlobalGetterConflict[] = [];
+        for (const [name, items] of buckets) {
+            if (items.length > 1) {
+                conflicts.push({ name, items: [...items] });
+            }
+        }
+        return conflicts;
     }
 
     private makeTypeNamespaceKey(type: VuexItemType, namespace: string): string {
@@ -282,6 +313,13 @@ export class StoreIndexer {
             if (ns) names.add(ns);
         }
         return Array.from(names);
+    }
+
+    public getDuplicateGlobalGetterConflicts(): VuexGlobalGetterConflict[] {
+        return this.duplicateGlobalGetterConflicts.map((conflict) => ({
+            name: conflict.name,
+            items: [...conflict.items],
+        }));
     }
 
     // Helpers to find specific items

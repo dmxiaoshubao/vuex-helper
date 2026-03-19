@@ -47,7 +47,7 @@ export class VuexDiagnosticProvider {
         if (!this.storeIndexer.getStoreMap()) return [];
 
         const refs = this.scanReferences(document);
-        const diagnostics: vscode.Diagnostic[] = [];
+        const diagnostics: vscode.Diagnostic[] = this.collectDuplicateGlobalGetterDiagnostics(document);
 
         for (const ref of refs) {
             const found = this.lookupService.findItem({
@@ -62,6 +62,38 @@ export class VuexDiagnosticProvider {
                 const diag = new vscode.Diagnostic(
                     ref.range,
                     `Vuex: ${typeLabel} "${ref.name}" not found in store.`,
+                    vscode.DiagnosticSeverity.Warning,
+                );
+                diag.source = 'Vuex Helper';
+                diagnostics.push(diag);
+            }
+        }
+
+        return diagnostics;
+    }
+
+    private collectDuplicateGlobalGetterDiagnostics(document: vscode.TextDocument): vscode.Diagnostic[] {
+        const conflicts = this.storeIndexer.getDuplicateGlobalGetterConflicts();
+        if (conflicts.length === 0) return [];
+
+        const diagnostics: vscode.Diagnostic[] = [];
+        const normalizedFileName = vscode.Uri.file(document.fileName).fsPath;
+
+        for (const conflict of conflicts) {
+            const relatedItems = conflict.items.filter((item) =>
+                vscode.Uri.file(item.defLocation.uri.fsPath).fsPath === normalizedFileName
+            );
+            if (relatedItems.length === 0) continue;
+
+            const relatedFiles = conflict.items
+                .map((item) => vscode.workspace.asRelativePath(item.defLocation.uri.fsPath))
+                .filter((value, index, array) => array.indexOf(value) === index)
+                .join(', ');
+
+            for (const item of relatedItems) {
+                const diag = new vscode.Diagnostic(
+                    this.createDefinitionRange(item.defLocation, item.name),
+                    `Vuex: Duplicate global getter "${conflict.name}" detected. Non-namespaced getters share the global namespace. Related definitions: ${relatedFiles}.`,
                     vscode.DiagnosticSeverity.Warning,
                 );
                 diag.source = 'Vuex Helper';
@@ -124,6 +156,27 @@ export class VuexDiagnosticProvider {
         } catch {
             return null;
         }
+    }
+
+    private createDefinitionRange(location: vscode.Location, name: string): vscode.Range {
+        const anyLocation = location as any;
+        const explicitRange = anyLocation.range;
+        if (explicitRange) {
+            return explicitRange;
+        }
+
+        const rangeOrPosition = anyLocation.rangeOrPosition;
+        if (rangeOrPosition && rangeOrPosition.start && rangeOrPosition.end) {
+            return rangeOrPosition;
+        }
+
+        const position = rangeOrPosition || anyLocation.position || new vscode.Position(0, 0);
+        return new vscode.Range(
+            position.line,
+            position.character,
+            position.line,
+            position.character + Math.max(name.length, 1),
+        );
     }
 
     /**

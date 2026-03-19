@@ -1,0 +1,8 @@
+{
+  "name": "duplicate-global-getter-project",
+  "version": "1.0.0",
+  "dependencies": {
+    "vue": "^2.7.14",
+    "vuex": "^3.6.2"
+  }
+}

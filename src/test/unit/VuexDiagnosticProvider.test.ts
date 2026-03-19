@@ -42,6 +42,30 @@ class MockStoreIndexer extends StoreIndexer {
     getStoreEntryPath() { return '/mock/workspace/store/index.js'; }
 }
 
+class DuplicateGetterConflictMockStoreIndexer extends MockStoreIndexer {
+    getDuplicateGlobalGetterConflicts() {
+        const mkLoc = (file: string, line = 0, character = 0) =>
+            new vscode.Location(vscode.Uri.file(file), new vscode.Position(line, character));
+        return [
+            {
+                name: 'sharedTotal',
+                items: [
+                    {
+                        name: 'sharedTotal',
+                        modulePath: [],
+                        defLocation: mkLoc('/mock/workspace/store/index.js', 4, 4),
+                    },
+                    {
+                        name: 'sharedTotal',
+                        modulePath: [],
+                        defLocation: mkLoc('/mock/workspace/store/modules/legacy.js', 6, 4),
+                    },
+                ],
+            },
+        ];
+    }
+}
+
 // ---- createDocument helper ----
 function createDocument(text: string, fileName = '/mock/workspace/src/App.vue') {
     const lines = text.split('\n');
@@ -573,5 +597,40 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
             '/mock/workspace/store/modules/cart.js');
         const diags = provider.diagnose(doc);
         assert.ok(diags.some(d => d.message.includes('nonExistent')), 'Expected warning for invalid context.getters access');
+    });
+});
+
+describe('VuexDiagnosticProvider duplicate global getter conflicts', () => {
+    it('should warn on root getter definition when global getter name conflicts', () => {
+        const provider = new VuexDiagnosticProvider(new DuplicateGetterConflictMockStoreIndexer());
+        const doc = createDocument(`export default {
+  getters: {
+    sharedTotal: (state) => state.count,
+  },
+}`, '/mock/workspace/store/index.js');
+
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('Duplicate global getter "sharedTotal"')), 'Expected duplicate getter warning on root store');
+    });
+
+    it('should warn on non-namespaced module getter definition when global getter name conflicts', () => {
+        const provider = new VuexDiagnosticProvider(new DuplicateGetterConflictMockStoreIndexer());
+        const doc = createDocument(`export default {
+  namespaced: false,
+  getters: {
+    sharedTotal: (state) => state.count,
+  },
+}`, '/mock/workspace/store/modules/legacy.js');
+
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('Duplicate global getter "sharedTotal"')), 'Expected duplicate getter warning on non-namespaced module');
+    });
+
+    it('should not warn in unrelated file when duplicate global getter conflict exists elsewhere', () => {
+        const provider = new VuexDiagnosticProvider(new DuplicateGetterConflictMockStoreIndexer());
+        const doc = createDocument(`export default { computed: {} }`, '/mock/workspace/src/components/App.vue');
+
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Unrelated file should not receive duplicate getter diagnostics');
     });
 });
