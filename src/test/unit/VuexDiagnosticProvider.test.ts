@@ -377,6 +377,32 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         assert.strictEqual(diags.length, 0, 'context.rootState should not trigger diagnostics');
     });
 
+    it('should warn for invalid context.rootState dot access', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    myAction(context) { return context.rootState.noSuchRoot; }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('noSuchRoot')), 'Expected warning for invalid context.rootState access');
+    });
+
+    it('should not warn for context.rootState dot access in non-store file', () => {
+        const doc = createDocument(`function helper(context) { return context.rootState.noSuchRoot; }`, '/mock/workspace/src/components/App.vue');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Non-store context.rootState should be ignored');
+    });
+
+    it('should warn for invalid context.rootGetters dot access', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    myAction(context) { return context.rootGetters.noSuchGetter; }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('noSuchGetter')), 'Expected warning for invalid context.rootGetters access');
+    });
+
     // ---- store 内部裸 state.xxx 访问 ----
     it('should not warn for valid internal state access in module file', () => {
         const doc = createDocument(`const mutations = {
@@ -431,6 +457,32 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
 
+    it('should not warn for bare state access when action context omits state binding', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    myAction({}) { return state.noSuchField; }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Bare state without binding should be ignored');
+    });
+
+    it('should warn for invalid context.state access in module file', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    myAction(context) { return context.state.noSuchField; }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('noSuchField')), 'Expected warning for invalid context.state access');
+    });
+
+    it('should not warn for context.state access in non-store file', () => {
+        const doc = createDocument(`function helper(context) { return context.state.noSuchField; }`, '/mock/workspace/src/components/App.vue');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Non-store context.state should be ignored');
+    });
+
     it('should not warn for valid bare commit in store action context', () => {
         const doc = createDocument(`export default {
   actions: {
@@ -441,6 +493,48 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
 }`, '/mock/workspace/store/modules/cart.js');
         const diags = provider.diagnose(doc);
         assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for valid context.commit in store action context', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    addItem(context) {
+      context.commit('ADD_ITEM');
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for valid context optional-chain commit in store action context', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    addItem(context) {
+      context?.commit('ADD_ITEM');
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for context.commit in non-store file', () => {
+        const doc = createDocument(`function helper(context) { context.commit('NO_SUCH'); }`, '/mock/workspace/src/components/App.vue');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Non-store context.commit should be ignored');
+    });
+
+    it('should ignore bare commit when action context omits commit binding', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    addItem({}) {
+      commit('NO_SUCH');
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, 'Bare commit without binding should be ignored');
     });
 
     // ---- 内部 getters.xxx 访问 ----
@@ -467,5 +561,17 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
             '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.strictEqual(diags.length, 0, 'Non-store file should not scan internal getters');
+    });
+
+    it('should warn for invalid context.getters access in module file', () => {
+        const doc = createDocument(
+            `export default {
+  actions: {
+    myAction(context) { return context.getters.nonExistent; }
+  }
+}`,
+            '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('nonExistent')), 'Expected warning for invalid context.getters access');
     });
 });

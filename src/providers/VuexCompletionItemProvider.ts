@@ -7,6 +7,8 @@ import { PathResolver } from "../utils/PathResolver";
 import {
   collectStoreLikeNames,
   hasRootTrueOption,
+  hasScopedVuexCallContext,
+  hasParamContextMemberAccess,
   hasParamBindingMemberAccess,
 } from "../utils/VuexProviderUtils";
 
@@ -45,27 +47,34 @@ export class VuexCompletionItemProvider
 
     // 1. Vuex Context (String literals) - existing logic
     const vuexContext = this.contextScanner.getContext(document, position, storeLikeNameSet);
+    const scopedVuexContext =
+      vuexContext &&
+      (vuexContext.method !== "commit" && vuexContext.method !== "dispatch" ||
+        vuexContext.isStoreMethod === true ||
+        hasScopedVuexCallContext(document, position, vuexContext.method, currentNamespace))
+        ? vuexContext
+        : undefined;
 
-    if (vuexContext && vuexContext.type !== "unknown") {
+    if (scopedVuexContext && scopedVuexContext.type !== "unknown") {
       if (token.isCancellationRequested) return undefined;
       const contextLineText = document.lineAt(position.line).text;
       const contextPrefix = contextLineText.substring(0, position.character);
       const callName =
-        vuexContext.method === "commit" || vuexContext.method === "dispatch"
-          ? (vuexContext.calleeName || vuexContext.method).trim()
+        scopedVuexContext.method === "commit" || scopedVuexContext.method === "dispatch"
+          ? (scopedVuexContext.calleeName || scopedVuexContext.method).trim()
           : "";
       const escapedCallName = callName
         ? callName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         : "";
       const commitDispatchArgMatch =
-        vuexContext.method === "commit" || vuexContext.method === "dispatch"
+        scopedVuexContext.method === "commit" || scopedVuexContext.method === "dispatch"
           ? contextPrefix.match(new RegExp(`${escapedCallName}\\(\\s*['"]([^'"]*)$`))
           : null;
       const hasExplicitNamespaceInput =
         !!commitDispatchArgMatch && commitDispatchArgMatch[1].includes("/");
       const isRootTrue =
-        vuexContext.method === "commit" || vuexContext.method === "dispatch"
-          ? hasRootTrueOption(document, position, vuexContext.method, vuexContext.calleeName)
+        scopedVuexContext.method === "commit" || scopedVuexContext.method === "dispatch"
+          ? hasRootTrueOption(document, position, scopedVuexContext.method, scopedVuexContext.calleeName)
           : false;
 
       let items: {
@@ -74,13 +83,13 @@ export class VuexCompletionItemProvider
         modulePath: string[];
       }[] = [];
       let kind = vscode.CompletionItemKind.Property;
-      const itemType = this.toItemType(vuexContext.type);
+      const itemType = this.toItemType(scopedVuexContext.type);
 
       // Special Case: mapHelper arg 0 -> Show Modules
       if (
-        vuexContext.method === "mapHelper" &&
-        vuexContext.argumentIndex === 0 &&
-        !vuexContext.isNested
+        scopedVuexContext.method === "mapHelper" &&
+        scopedVuexContext.argumentIndex === 0 &&
+        !scopedVuexContext.isNested
       ) {
         const allModules = this.storeIndexer.getAllModuleNames();
 
@@ -108,31 +117,31 @@ export class VuexCompletionItemProvider
         kind = vscode.CompletionItemKind.Module;
       } else {
         // Normal Logic
-        if (vuexContext.type === "state" && itemType) {
+        if (scopedVuexContext.type === "state" && itemType) {
           items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Field;
-        } else if (vuexContext.type === "getter" && itemType) {
+        } else if (scopedVuexContext.type === "getter" && itemType) {
           items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Property;
-        } else if (vuexContext.type === "mutation" && itemType) {
+        } else if (scopedVuexContext.type === "mutation" && itemType) {
           items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Method;
-        } else if (vuexContext.type === "action" && itemType) {
+        } else if (scopedVuexContext.type === "action" && itemType) {
           items = this.storeIndexer.getItemsByType(itemType);
           kind = vscode.CompletionItemKind.Function;
         }
 
         // Filtering by Namespace
-        if (vuexContext.namespace && itemType) {
-          const ns = vuexContext.namespace;
+        if (scopedVuexContext.namespace && itemType) {
+          const ns = scopedVuexContext.namespace;
           items = this.storeIndexer.getItemsByTypeAndNamespace(itemType, ns);
         } else if (
           currentNamespace &&
           itemType &&
-          (vuexContext.type === "mutation" || vuexContext.type === "action") &&
-          !vuexContext.isStoreMethod &&
+          (scopedVuexContext.type === "mutation" || scopedVuexContext.type === "action") &&
+          !scopedVuexContext.isStoreMethod &&
           !isRootTrue &&
-          !(hasExplicitNamespaceInput && (vuexContext.method === "commit" || vuexContext.method === "dispatch"))
+          !(hasExplicitNamespaceInput && (scopedVuexContext.method === "commit" || scopedVuexContext.method === "dispatch"))
         ) {
           // If inside a module, scoped completion for commit/dispatch
           // Filter to only current module items (Strict scoping as per user request)
@@ -222,7 +231,7 @@ export class VuexCompletionItemProvider
       const isPropertyAccess = lastChar === ".";
 
       // Handling Property Access (e.g. "state." or "state.user.")
-      if (isPropertyAccess && vuexContext.type === "state") {
+      if (isPropertyAccess && scopedVuexContext.type === "state") {
         // 1. Extract the dotted path after "state." relative to the current namespace
         // effectivePrefix (e.g. "... state.user.") -> split by dot
         const match = effectivePrefix.match(/state\.([\w\.]*)$/);
@@ -241,8 +250,8 @@ export class VuexCompletionItemProvider
         // Combined path = helper namespace (if present) + relativePath.
         // For createNamespacedHelpers/mapState('ns', {...}) callback, `state` is module-local state,
         // so we must anchor suggestions to that namespace instead of current file namespace.
-        const contextNamespace = vuexContext.namespace
-          ? vuexContext.namespace.split("/").filter(Boolean)
+        const contextNamespace = scopedVuexContext.namespace
+          ? scopedVuexContext.namespace.split("/").filter(Boolean)
           : undefined;
         const baseNamespace = contextNamespace || currentNamespace || [];
         const targetPath = [...baseNamespace, ...relativePath];
@@ -321,10 +330,10 @@ export class VuexCompletionItemProvider
       const results = items.map((item) => {
         let label = [...item.modulePath, item.name].join("/");
         const isCommitDispatchArg0 =
-          (vuexContext.method === "commit" || vuexContext.method === "dispatch") &&
-          vuexContext.argumentIndex === 0;
+          (scopedVuexContext.method === "commit" || scopedVuexContext.method === "dispatch") &&
+          scopedVuexContext.argumentIndex === 0;
         const isLocalCommitDispatchArg0 =
-          isCommitDispatchArg0 && !vuexContext.isStoreMethod && !isRootTrue;
+          isCommitDispatchArg0 && !scopedVuexContext.isStoreMethod && !isRootTrue;
         // If inside a module and matches current namespace, use short name
         if (
           currentNamespace &&
@@ -334,14 +343,14 @@ export class VuexCompletionItemProvider
           label = item.name;
         }
         // OR if explicit namespace arg was provided (handled by existing logic, but let's be safe)
-        if (vuexContext.namespace) {
+        if (scopedVuexContext.namespace) {
           label = item.name;
         }
 
         const completionItem = this.createCompletionItem(
           label,
           kind,
-          `[Vuex] ${vuexContext.type}`,
+          `[Vuex] ${scopedVuexContext.type}`,
           item.documentation,
         );
 
@@ -386,7 +395,7 @@ export class VuexCompletionItemProvider
         } else {
           // 不在引号内，添加引号
           completionItem.range = replacementRange;
-          if (vuexContext.isObject) {
+          if (scopedVuexContext.isObject) {
             const alias = item.name;
             completionItem.insertText = `${alias}: '${label}'`;
             completionItem.filterText = `${alias}: '${label}'`;
@@ -711,7 +720,12 @@ export class VuexCompletionItemProvider
 
     // 3a. rootState.xxx completion (从根开始的 state 访问)
     const rootStateMatch = prefix.match(/\brootState\.([a-zA-Z0-9_$\.]*)$/);
-    if (rootStateMatch) {
+    if (
+      rootStateMatch &&
+      hasParamBindingMemberAccess(document, position, "rootState", currentNamespace, {
+        replaceBeforeCursor: rootStateMatch[1]?.length ?? 0,
+      })
+    ) {
       if (token.isCancellationRequested) return undefined;
       const pathInput = rootStateMatch[1] || "";
       const pathParts = pathInput.split(".");
@@ -755,9 +769,66 @@ export class VuexCompletionItemProvider
       return new vscode.CompletionList(Array.from(suggestions.values()), false);
     }
 
+    const contextRootStateMatch = normalizedPrefix.match(
+      /\b[A-Za-z_$][\w$]*\.rootState\.([a-zA-Z0-9_$\.]*)$/,
+    );
+    if (
+      contextRootStateMatch &&
+      hasParamContextMemberAccess(document, position, "rootState", currentNamespace, {
+        replaceBeforeCursor: contextRootStateMatch[1]?.length ?? 0,
+      })
+    ) {
+      if (token.isCancellationRequested) return undefined;
+      const pathInput = contextRootStateMatch[1] || "";
+      const pathParts = pathInput.split(".");
+      const currentInput = pathParts[pathParts.length - 1] || "";
+      const relativePath = pathParts.slice(0, -1).filter(Boolean);
+      const targetPath = [...relativePath];
+
+      const replacementRange = this.createDotRange(
+        position.line, position.character, currentInput.length,
+      );
+      const suggestions = new Map<string, vscode.CompletionItem>();
+
+      storeMap.state.forEach((item) => {
+        if (item.modulePath.length < targetPath.length) return;
+        for (let i = 0; i < targetPath.length; i++) {
+          if (item.modulePath[i] !== targetPath[i]) return;
+        }
+        const remainingPath = item.modulePath.slice(targetPath.length);
+        if (remainingPath.length === 0) {
+          if (!suggestions.has(item.name)) {
+            const ci = this.createCompletionItem(item.name, vscode.CompletionItemKind.Field, "[Vuex] context.rootState", item.documentation);
+            ci.range = replacementRange;
+            ci.insertText = "." + item.name;
+            ci.filterText = "." + pathInput + item.name;
+            if (item.displayType) {
+              ci.detail += ` : ${item.displayType}`;
+            }
+            suggestions.set(item.name, ci);
+          }
+        } else {
+          const nextModule = remainingPath[0];
+          if (!suggestions.has(nextModule)) {
+            const ci = this.createCompletionItem(nextModule, vscode.CompletionItemKind.Module, "[Vuex] Module");
+            ci.range = replacementRange;
+            ci.insertText = "." + nextModule;
+            ci.filterText = "." + pathInput + nextModule;
+            suggestions.set(nextModule, ci);
+          }
+        }
+      });
+      return new vscode.CompletionList(Array.from(suggestions.values()), false);
+    }
+
     // 3b. rootGetters.xxx completion (点号形式，根级 getter 用点号，命名空间 getter 用方括号)
     const rootGettersDotMatch = prefix.match(/\brootGetters\.([a-zA-Z0-9_$]*)$/);
-    if (rootGettersDotMatch) {
+    if (
+      rootGettersDotMatch &&
+      hasParamBindingMemberAccess(document, position, "rootGetters", currentNamespace, {
+        replaceBeforeCursor: rootGettersDotMatch[1]?.length ?? 0,
+      })
+    ) {
       if (token.isCancellationRequested) return undefined;
       const currentInput = rootGettersDotMatch[1] || "";
       const accessToken = this.getAccessToken(prefix, currentInput.length);
@@ -776,6 +847,42 @@ export class VuexCompletionItemProvider
             ci.filterText = accessToken + currentInput + item.name;
           } else {
             // 命名空间 getter — 方括号插入
+            const safePath = fullPath.replace(/'/g, "\\'");
+            ci.insertText = accessToken === "?." ? `?.['${safePath}']` : `['${safePath}']`;
+            ci.filterText = accessToken + currentInput + fullPath;
+          }
+          this.boostOptionalChainPriority(ci, accessToken);
+          suggestions.set(fullPath, ci);
+        }
+      });
+      return new vscode.CompletionList(Array.from(suggestions.values()), false);
+    }
+
+    const contextRootGettersDotMatch = normalizedPrefix.match(
+      /\b[A-Za-z_$][\w$]*\.rootGetters\.([a-zA-Z0-9_$]*)$/,
+    );
+    if (
+      contextRootGettersDotMatch &&
+      hasParamContextMemberAccess(document, position, "rootGetters", currentNamespace, {
+        replaceBeforeCursor: contextRootGettersDotMatch[1]?.length ?? 0,
+      })
+    ) {
+      if (token.isCancellationRequested) return undefined;
+      const currentInput = contextRootGettersDotMatch[1] || "";
+      const accessToken = this.getAccessToken(prefix, currentInput.length);
+      const replacementRange = this.createDotRange(
+        position.line, position.character, currentInput.length, accessToken,
+      );
+      const suggestions = new Map<string, vscode.CompletionItem>();
+      storeMap.getters.forEach((item) => {
+        const fullPath = this.getFullPath(item);
+        if (!suggestions.has(fullPath)) {
+          const ci = this.createCompletionItem(fullPath, vscode.CompletionItemKind.Property, "[Vuex] context.rootGetters", item.documentation);
+          ci.range = replacementRange;
+          if (item.modulePath.length === 0) {
+            ci.insertText = accessToken + item.name;
+            ci.filterText = accessToken + currentInput + item.name;
+          } else {
             const safePath = fullPath.replace(/'/g, "\\'");
             ci.insertText = accessToken === "?." ? `?.['${safePath}']` : `['${safePath}']`;
             ci.filterText = accessToken + currentInput + fullPath;
@@ -845,7 +952,12 @@ export class VuexCompletionItemProvider
     // 3. In-Module State Completion (state.xxx / state.a.b.xxx)
     if (currentNamespace) {
       const inModuleStateMatch = prefix.match(/\bstate\.([a-zA-Z0-9_$\.]*)$/);
-      if (inModuleStateMatch) {
+      if (
+        inModuleStateMatch &&
+        hasParamBindingMemberAccess(document, position, "state", currentNamespace, {
+          replaceBeforeCursor: inModuleStateMatch[1]?.length ?? 0,
+        })
+      ) {
         if (token.isCancellationRequested) return undefined;
         const pathInput = inModuleStateMatch[1] || "";
         const pathParts = pathInput.split(".");
@@ -904,11 +1016,79 @@ export class VuexCompletionItemProvider
         return new vscode.CompletionList(Array.from(suggestions.values()), false);
       }
 
+      const contextStateMatch = normalizedPrefix.match(
+        /\b[A-Za-z_$][\w$]*\.state\.([a-zA-Z0-9_$\.]*)$/,
+      );
+      if (
+        contextStateMatch &&
+        hasParamContextMemberAccess(document, position, "state", currentNamespace, {
+          replaceBeforeCursor: contextStateMatch[1]?.length ?? 0,
+        })
+      ) {
+        if (token.isCancellationRequested) return undefined;
+        const pathInput = contextStateMatch[1] || "";
+        const pathParts = pathInput.split(".");
+        const currentInput = pathParts[pathParts.length - 1] || "";
+        const relativePath = pathParts.slice(0, -1).filter(Boolean);
+        const targetPath = [...currentNamespace, ...relativePath];
+
+        const replacementRange = this.createDotRange(
+          position.line,
+          position.character,
+          currentInput.length,
+        );
+
+        const suggestions = new Map<string, vscode.CompletionItem>();
+
+        storeMap.state.forEach((item) => {
+          if (item.modulePath.length < targetPath.length) return;
+          for (let i = 0; i < targetPath.length; i++) {
+            if (item.modulePath[i] !== targetPath[i]) return;
+          }
+
+          const remainingPath = item.modulePath.slice(targetPath.length);
+
+          if (remainingPath.length === 0) {
+            const label = item.name;
+            if (!suggestions.has(label)) {
+              const completionItem = this.createCompletionItem(
+                label,
+                vscode.CompletionItemKind.Field,
+                "[Vuex Module] context.state",
+                item.documentation,
+              );
+              completionItem.range = replacementRange;
+              completionItem.insertText = "." + label;
+              completionItem.filterText = "." + pathInput + label;
+              if (item.displayType) {
+                completionItem.detail += ` : ${item.displayType}`;
+              }
+              suggestions.set(label, completionItem);
+            }
+          } else {
+            const nextModule = remainingPath[0];
+            if (!suggestions.has(nextModule)) {
+              const completionItem = this.createCompletionItem(
+                nextModule,
+                vscode.CompletionItemKind.Module,
+                "[Vuex Module] state",
+              );
+              completionItem.range = replacementRange;
+              completionItem.insertText = "." + nextModule;
+              completionItem.filterText = "." + pathInput + nextModule;
+              suggestions.set(nextModule, completionItem);
+            }
+          }
+        });
+
+        return new vscode.CompletionList(Array.from(suggestions.values()), false);
+      }
+
       // 3b. In-Module Getters Completion (getters.xxx)
       const inModuleGettersMatch = prefix.match(/(?<!\.|root)\bgetters\.([a-zA-Z0-9_$]*)$/);
       if (
         inModuleGettersMatch &&
-        hasParamBindingMemberAccess(document, position, "getters", {
+        hasParamBindingMemberAccess(document, position, "getters", currentNamespace, {
           replaceBeforeCursor: inModuleGettersMatch[1]?.length ?? 0,
         })
       ) {
@@ -930,6 +1110,44 @@ export class VuexCompletionItemProvider
             label,
             vscode.CompletionItemKind.Function,
             "[Vuex Module] getter",
+            item.documentation,
+          );
+          completionItem.range = replacementRange;
+          completionItem.insertText = "." + label;
+          completionItem.filterText = "." + label;
+          items.push(completionItem);
+        });
+
+        return new vscode.CompletionList(items, false);
+      }
+
+      const contextGettersMatch = normalizedPrefix.match(
+        /\b[A-Za-z_$][\w$]*\.getters\.([a-zA-Z0-9_$]*)$/,
+      );
+      if (
+        contextGettersMatch &&
+        hasParamContextMemberAccess(document, position, "getters", currentNamespace, {
+          replaceBeforeCursor: contextGettersMatch[1]?.length ?? 0,
+        })
+      ) {
+        if (token.isCancellationRequested) return undefined;
+        const currentInput = contextGettersMatch[1] || "";
+        const nsStr = currentNamespace.join("/");
+
+        const replacementRange = this.createDotRange(
+          position.line,
+          position.character,
+          currentInput.length,
+        );
+
+        const items: vscode.CompletionItem[] = [];
+        storeMap.getters.forEach((item) => {
+          if (item.modulePath.join("/") !== nsStr) return;
+          const label = item.name;
+          const completionItem = this.createCompletionItem(
+            label,
+            vscode.CompletionItemKind.Function,
+            "[Vuex Module] context.getters",
             item.documentation,
           );
           completionItem.range = replacementRange;

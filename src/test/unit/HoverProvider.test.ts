@@ -321,6 +321,50 @@ export default {
         assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local mutation');
     });
 
+    it('should prefer local hover for direct context.commit in module context', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function action(ctx) { ctx.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local mutation');
+    });
+
+    it('should prefer local hover for direct context optional-chain commit in module context', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function action(ctx) { ctx?.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local mutation');
+    });
+
+    it('should not show hover for direct context.commit in non-store file', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function helper(ctx) { ctx.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Non-store ctx.commit should not resolve to Vuex hover');
+    });
+
+    it('should not leak bare commit hover across sibling action scopes', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = `function action({ commit }) { commit('SET_NAME') }\nfunction factoryReset({}) { commit('SET_NAME') }`;
+        const char = text.split('\n')[1].indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Bare commit in sibling scope should not resolve to Vuex hover');
+    });
+
     it('should prefer root hover when dispatch alias uses options variable root true', async () => {
         const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
         const text = `const opts = { root: true }; function action({ dispatch: d }) { d('fetchProfile', null, opts) }`;
@@ -388,6 +432,42 @@ describe('VuexHoverProvider rootState/rootGetters', () => {
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root getter file');
     });
 
+    it('should show hover for context.rootState.count in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.rootState.count }`;
+        const char = text.indexOf('context.rootState.count') + 'context.rootState.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State: count'), 'Hover should include state name');
+        assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root state file');
+    });
+
+    it('should not show hover for context.rootState.count in non-store file', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function helper(context) { return context.rootState.count }`;
+        const char = text.indexOf('context.rootState.count') + 'context.rootState.'.length + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Non-store context.rootState should not resolve to Vuex hover');
+    });
+
+    it('should show hover for context.rootGetters.isAdmin in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.rootGetters.isAdmin }`;
+        const char = text.indexOf('isAdmin') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: isAdmin'), 'Hover should include getter name');
+        assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root getter file');
+    });
+
     it('should show hover for optional-chain this.$store?.getters?.["others/hasNotifications"]', async () => {
         const provider = new VuexHoverProvider(new MockStoreIndexer());
         const text = `this.$store?.getters?.['others/hasNotifications']`;
@@ -443,6 +523,29 @@ describe('VuexHoverProvider rootState/rootGetters', () => {
 });
 
 describe('VuexHoverProvider internal getters access', () => {
+    it('should show hover for context.state.profile in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for context.state');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State: profile'), 'Hover should include local state label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local state definition');
+    });
+
+    it('should not show hover for context.state.profile in non-store file', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function helper(context) { return context.state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Non-store context.state should not resolve to Vuex hover');
+    });
+
     it('should show hover for local getter in store module context', async () => {
         const provider = new VuexHoverProvider(new MockStoreIndexer());
         const text = `const g = (state, getters) => { return getters.isActive }`;
@@ -474,6 +577,29 @@ describe('VuexHoverProvider internal getters access', () => {
 
         const hover = await provider.provideHover(document, { line: 1, character: char } as any, {} as any);
         assert.strictEqual(hover, undefined, 'Non-store file should not resolve bare getters hover');
+    });
+
+    it('should not show hover for bare state access when binding is absent', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action({}) { return state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Bare state without binding should not resolve to Vuex hover');
+    });
+
+    it('should show hover for context.getters.isActive in module context', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.getters.isActive }`;
+        const char = text.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should be resolved for context.getters');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: isActive'), 'Hover should include getter label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local getter definition');
     });
 });
 

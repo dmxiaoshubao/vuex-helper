@@ -4,6 +4,11 @@ import traverse from '@babel/traverse';
 import type * as t from '@babel/types';
 import { StoreIndexer } from './StoreIndexer';
 import { VuexLookupService } from './VuexLookupService';
+import {
+    hasExplicitVuexStoreStructure,
+    isLikelyVuexContextBinding,
+    isLikelyVuexSpecialParamBinding,
+} from '../utils/VuexProviderUtils';
 
 /**
  * 可诊断的 Vuex 引用
@@ -80,24 +85,27 @@ export class VuexDiagnosticProvider {
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
         const refs: DiagnosableRef[] = [];
         const ast = this.parseScriptAst(content);
+        const allowLooseStoreFileFallback =
+            currentNamespace !== undefined && !hasExplicitVuexStoreStructure(ast);
 
         if (ast) {
             this.scanMapHelpersAst(ast, scriptOffset, document, currentNamespace, refs);
-            this.scanCommitDispatchAst(ast, scriptOffset, document, currentNamespace, refs);
+            this.scanCommitDispatchAst(ast, scriptOffset, document, currentNamespace, refs, allowLooseStoreFileFallback);
         } else {
             this.scanMapHelpers(content, scriptOffset, document, currentNamespace, refs);
             this.scanCommitDispatch(content, scriptOffset, document, currentNamespace, refs);
         }
         this.scanStoreBracketAccess(content, scriptOffset, document, refs);
         this.scanStoreDotChain(content, scriptOffset, document, refs);
-        this.scanRootStateGetters(content, scriptOffset, document, refs);
+        if (ast) {
+            this.scanParamContextAccessAst(ast, scriptOffset, document, currentNamespace, refs, allowLooseStoreFileFallback);
+        } else {
+            this.scanRootStateGetters(content, scriptOffset, document, refs);
+        }
 
         // store 文件内部的裸 state.xxx / getters.xxx 访问（mutation/getter/action 参数）
-        if (currentNamespace) {
-            if (ast) {
-                this.scanInternalStateAccessAst(ast, scriptOffset, document, currentNamespace, refs);
-                this.scanInternalGettersAccessAst(ast, scriptOffset, document, currentNamespace, refs);
-            } else {
+        if (currentNamespace !== undefined) {
+            if (!ast) {
                 this.scanInternalStateAccess(content, scriptOffset, document, currentNamespace, refs);
                 this.scanInternalGettersAccess(content, scriptOffset, document, currentNamespace, refs);
             }
@@ -353,6 +361,7 @@ export class VuexDiagnosticProvider {
         document: vscode.TextDocument,
         currentNamespace: string[] | undefined,
         refs: DiagnosableRef[],
+        allowLooseStoreFileFallback: boolean,
     ): void {
         const visitCall = (path: any) => {
             const callee = path.node.callee;
@@ -360,14 +369,30 @@ export class VuexDiagnosticProvider {
             let preferLocal = false;
 
             if (callee.type === 'Identifier' && (callee.name === 'commit' || callee.name === 'dispatch')) {
-                if (currentNamespace === undefined) return;
-                const binding = path.scope.getBinding(callee.name);
-                if (!binding || binding.kind !== 'param') return;
-                method = callee.name;
+                const resolvedMethod = this.resolveVuexMethodBinding(
+                    path.scope.getBinding(callee.name),
+                    callee.name,
+                    currentNamespace,
+                    allowLooseStoreFileFallback,
+                );
+                if (!resolvedMethod) return;
+                method = resolvedMethod;
                 preferLocal = true;
             } else if (this.isStoreMethodCallee(callee)) {
                 method = (callee.property as t.Identifier).name as 'commit' | 'dispatch';
                 preferLocal = false;
+            } else if (
+                currentNamespace !== undefined &&
+                (callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression') &&
+                !callee.computed &&
+                callee.object.type === 'Identifier' &&
+                callee.property.type === 'Identifier' &&
+                (callee.property.name === 'commit' || callee.property.name === 'dispatch')
+            ) {
+                const binding = path.scope.getBinding(callee.object.name);
+                if (!isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)) return;
+                method = callee.property.name;
+                preferLocal = true;
             }
 
             if (!method) return;
@@ -397,6 +422,171 @@ export class VuexDiagnosticProvider {
         traverse(ast, {
             CallExpression: visitCall,
             OptionalCallExpression: visitCall,
+        } as any);
+    }
+
+    private scanParamContextAccessAst(
+        ast: t.File,
+        scriptOffset: number,
+        document: vscode.TextDocument,
+        currentNamespace: string[] | undefined,
+        refs: DiagnosableRef[],
+        allowLooseStoreFileFallback: boolean,
+    ): void {
+        const getIdentifierChain = (node: t.Node | null | undefined): string[] | undefined => {
+            if (!node) return undefined;
+            if (node.type === 'Identifier') {
+                return [node.name];
+            }
+            if (
+                (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') &&
+                !node.computed &&
+                node.property.type === 'Identifier'
+            ) {
+                const parent = getIdentifierChain(node.object as t.Node);
+                if (!parent) return undefined;
+                return [...parent, node.property.name];
+            }
+            return undefined;
+        };
+
+        const pushRef = (
+            rawName: string,
+            type: 'state' | 'getter',
+            node: { start?: number | null; end?: number | null },
+            preferLocal: boolean,
+            targetCurrentNamespace: string[] | undefined,
+        ) => {
+            let name = rawName;
+            let namespace: string | undefined;
+            if (type !== 'state' && rawName.includes('/')) {
+                const parts = rawName.split('/');
+                name = parts.pop()!;
+                namespace = parts.join('/');
+            }
+
+            refs.push({
+                name,
+                type,
+                namespace,
+                range: this.createNodeRange(node, scriptOffset, document),
+                currentNamespace: targetCurrentNamespace,
+                preferLocal,
+            });
+        };
+
+        const visitMember = (path: any) => {
+            const node = path.node as t.MemberExpression | t.OptionalMemberExpression;
+            const parentNode = path.parentPath?.node;
+            if (
+                parentNode &&
+                (parentNode.type === 'MemberExpression' || parentNode.type === 'OptionalMemberExpression') &&
+                parentNode.object === node
+            ) {
+                return;
+            }
+            const objectChain = getIdentifierChain(node.object as t.Node);
+            if (!objectChain) return;
+
+            if (node.computed) {
+                if (node.property.type !== 'StringLiteral' || !node.property.value) return;
+                const binding = path.scope.getBinding(objectChain[0]);
+
+                if (
+                    (objectChain[0] === 'rootState' || objectChain[0] === 'rootGetters') &&
+                    isLikelyVuexSpecialParamBinding(
+                        binding,
+                        objectChain[0],
+                        currentNamespace,
+                        allowLooseStoreFileFallback,
+                    )
+                ) {
+                    pushRef(
+                        node.property.value,
+                        objectChain[0] === 'rootState' ? 'state' : 'getter',
+                        node.property,
+                        false,
+                        undefined,
+                    );
+                    return;
+                }
+
+                if (objectChain.length >= 2) {
+                    const keyword = objectChain[1];
+                    if (
+                        (keyword === 'rootState' || keyword === 'rootGetters') &&
+                        isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+                    ) {
+                        pushRef(
+                            node.property.value,
+                            keyword === 'rootState' ? 'state' : 'getter',
+                            node.property,
+                            false,
+                            undefined,
+                        );
+                    }
+                }
+                return;
+            }
+
+            if (node.property.type !== 'Identifier') return;
+
+            const binding = path.scope.getBinding(objectChain[0]);
+
+            const directKeyword = objectChain[0];
+            if (
+                (directKeyword === 'state' || directKeyword === 'getters') &&
+                isLikelyVuexSpecialParamBinding(
+                    binding,
+                    directKeyword,
+                    currentNamespace,
+                    allowLooseStoreFileFallback,
+                )
+            ) {
+                if (currentNamespace === undefined) return;
+                const accessPath = [...objectChain.slice(1), node.property.name].join('.');
+                pushRef(accessPath, directKeyword === 'state' ? 'state' : 'getter', node.property, true, currentNamespace);
+                return;
+            }
+
+            if (
+                (directKeyword === 'rootState' || directKeyword === 'rootGetters') &&
+                isLikelyVuexSpecialParamBinding(
+                    binding,
+                    directKeyword,
+                    currentNamespace,
+                    allowLooseStoreFileFallback,
+                )
+            ) {
+                const accessPath = [...objectChain.slice(1), node.property.name].join('.');
+                pushRef(accessPath, directKeyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
+                return;
+            }
+
+            if (objectChain.length < 2 || currentNamespace === undefined) return;
+
+            const keyword = objectChain[1];
+            if (
+                (keyword === 'state' || keyword === 'getters') &&
+                isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+            ) {
+                const accessPath = [...objectChain.slice(2), node.property.name].join('.');
+                pushRef(accessPath, keyword === 'state' ? 'state' : 'getter', node.property, true, currentNamespace);
+                return;
+            }
+
+            if (
+                (keyword === 'rootState' || keyword === 'rootGetters') &&
+                isLikelyVuexContextBinding(binding, currentNamespace, allowLooseStoreFileFallback)
+            ) {
+                const accessPath = [...objectChain.slice(2), node.property.name].join('.');
+                pushRef(accessPath, keyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
+            }
+        };
+
+        traverse(ast, {
+            MemberExpression: visitMember,
+            OptionalMemberExpression: visitMember,
         } as any);
     }
 
@@ -739,6 +929,59 @@ export class VuexDiagnosticProvider {
         const start = (node.start ?? 0) + scriptOffset;
         const end = (node.end ?? start) + scriptOffset;
         return new vscode.Range(document.positionAt(start), document.positionAt(end));
+    }
+
+    private resolveVuexMethodBinding(
+        binding: any,
+        expectedMethod: 'commit' | 'dispatch',
+        currentNamespace: string[] | undefined,
+        allowLooseStoreFileFallback: boolean,
+        seen: Set<any> = new Set(),
+    ): 'commit' | 'dispatch' | undefined {
+        if (!binding || seen.has(binding)) return undefined;
+        seen.add(binding);
+
+        if (binding.kind === 'param' || binding.path?.node?.type === 'ObjectProperty') {
+            return isLikelyVuexSpecialParamBinding(
+                binding,
+                expectedMethod,
+                currentNamespace,
+                allowLooseStoreFileFallback,
+            )
+                ? expectedMethod
+                : undefined;
+        }
+
+        const declarator = binding.path?.node;
+        if (!declarator || declarator.type !== 'VariableDeclarator' || !declarator.init) {
+            return undefined;
+        }
+
+        const init = declarator.init;
+        if (init.type === 'Identifier') {
+            return this.resolveVuexMethodBinding(
+                binding.path.scope.getBinding(init.name),
+                expectedMethod,
+                currentNamespace,
+                allowLooseStoreFileFallback,
+                seen,
+            );
+        }
+
+        if (
+            (init.type === 'MemberExpression' || init.type === 'OptionalMemberExpression') &&
+            !init.computed &&
+            init.property.type === 'Identifier' &&
+            init.property.name === expectedMethod &&
+            init.object.type === 'Identifier'
+        ) {
+            const sourceBinding = binding.path.scope.getBinding(init.object.name);
+            if (isLikelyVuexContextBinding(sourceBinding, currentNamespace, allowLooseStoreFileFallback)) {
+                return expectedMethod;
+            }
+        }
+
+        return undefined;
     }
 
     private isStoreMethodCallee(callee: any): callee is t.MemberExpression | t.OptionalMemberExpression {

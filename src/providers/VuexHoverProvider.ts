@@ -7,10 +7,13 @@ import { PathResolver } from '../utils/PathResolver';
 import {
     collectStoreLikeNames,
     extractStateAccessPath,
+    extractContextAccessPath,
     extractRootAccessPath,
     extractStringLiteralPathAtPosition,
     detectStoreBracketAccessor,
     extractStoreAccessPath,
+    hasScopedVuexCallContext,
+    hasParamContextMemberAccess,
     hasParamBindingMemberAccess,
     hasRootTrueOption,
     resolveMappedItem,
@@ -68,20 +71,51 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
 
         const currentNamespace = this.storeIndexer.getNamespace(document.fileName);
+        const validatedContext =
+            context &&
+            (context.method !== 'commit' && context.method !== 'dispatch' ||
+                context.isStoreMethod === true ||
+                hasScopedVuexCallContext(document, position, context.method, currentNamespace))
+                ? context
+                : undefined;
 
         // 3. Local State Hover (state.xxx)
         const stateAccessPath = extractStateAccessPath(rawPrefix, word);
+        const contextStateAccessPath = extractContextAccessPath(rawPrefix, word, 'state');
+        const contextGettersAccessPath = extractContextAccessPath(rawPrefix, word, 'getters');
 
         // 3a. rootState.xxx hover — 从根开始查找 state
         const rootStateAccessPath = extractRootAccessPath(rawPrefix, word, 'rootState');
-        if (rootStateAccessPath) {
+        if (
+            rootStateAccessPath &&
+            hasParamBindingMemberAccess(document, position, 'rootState', currentNamespace)
+        ) {
             return this.findHover(rootStateAccessPath, 'state');
+        }
+
+        const contextRootStateAccessPath = extractContextAccessPath(rawPrefix, word, 'rootState');
+        if (
+            contextRootStateAccessPath &&
+            hasParamContextMemberAccess(document, position, 'rootState', currentNamespace)
+        ) {
+            return this.findHover(contextRootStateAccessPath, 'state');
         }
 
         // 3b. rootGetters.xxx hover — 用 extractRootAccessPath 统一处理
         const rootGettersAccessPath = extractRootAccessPath(rawPrefix, word, 'rootGetters');
-        if (rootGettersAccessPath) {
+        if (
+            rootGettersAccessPath &&
+            hasParamBindingMemberAccess(document, position, 'rootGetters', currentNamespace)
+        ) {
             return this.findHover(rootGettersAccessPath, 'getter');
+        }
+
+        const contextRootGettersAccessPath = extractContextAccessPath(rawPrefix, word, 'rootGetters');
+        if (
+            contextRootGettersAccessPath &&
+            hasParamContextMemberAccess(document, position, 'rootGetters', currentNamespace)
+        ) {
+            return this.findHover(contextRootGettersAccessPath, 'getter');
         }
 
         // 3c. Bracket Notation hover：rootGetters['...'] / this.$store?.getters?.['...']
@@ -95,16 +129,36 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             }
         }
 
-        if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
+        if (
+            currentNamespace &&
+            /\bstate(?:\?\.|\.)$/.test(rawPrefix) &&
+            hasParamBindingMemberAccess(document, position, 'state', currentNamespace)
+        ) {
              return this.findHover(word, 'state', currentNamespace.join('/'));
         }
 
         if (
             currentNamespace &&
+            contextStateAccessPath &&
+            hasParamContextMemberAccess(document, position, 'state', currentNamespace)
+        ) {
+             return this.findHover(contextStateAccessPath, 'state', undefined, currentNamespace);
+        }
+
+        if (
+            currentNamespace &&
             /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
-            hasParamBindingMemberAccess(document, position, 'getters')
+            hasParamBindingMemberAccess(document, position, 'getters', currentNamespace)
         ) {
              return this.findHover(word, 'getter', currentNamespace.join('/'));
+        }
+
+        if (
+            currentNamespace &&
+            contextGettersAccessPath &&
+            hasParamContextMemberAccess(document, position, 'getters', currentNamespace)
+        ) {
+             return this.findHover(contextGettersAccessPath, 'getter', undefined, currentNamespace);
         }
 
         // 3d. this.$store.state.xxx / this.$store?.getters?.xxx hover
@@ -121,18 +175,18 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
 
         // Re-check context with awareness of current file namespace
-        if (context && context.type !== 'unknown') {
+        if (validatedContext && validatedContext.type !== 'unknown') {
              const preferLocalFromContext = !(
-                 (context.method === 'commit' || context.method === 'dispatch') &&
+                 (validatedContext.method === 'commit' || validatedContext.method === 'dispatch') &&
                  (
-                     context.isStoreMethod === true ||
-                     hasRootTrueOption(document, position, context.method, context.calleeName)
+                     validatedContext.isStoreMethod === true ||
+                     hasRootTrueOption(document, position, validatedContext.method, validatedContext.calleeName)
                  )
              );
-             if (context.type === 'state' && stateAccessPath) {
-                 return this.findHover(stateAccessPath, 'state', context.namespace, currentNamespace, preferLocalFromContext);
+             if (validatedContext.type === 'state' && stateAccessPath) {
+                 return this.findHover(stateAccessPath, 'state', validatedContext.namespace, currentNamespace, preferLocalFromContext);
              }
-             return this.findHover(word, context.type, context.namespace, currentNamespace, preferLocalFromContext);
+             return this.findHover(word, validatedContext.type, validatedContext.namespace, currentNamespace, preferLocalFromContext);
         }
 
         return undefined;

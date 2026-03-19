@@ -305,6 +305,48 @@ export default {
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
     });
 
+    it('should prefer local mutation for direct context.commit in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(ctx) { ctx.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+    });
+
+    it('should prefer local mutation for direct context optional-chain commit in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(ctx) { ctx?.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+    });
+
+    it('should not resolve direct context.commit in non-store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function helper(ctx) { ctx.commit('SET_NAME') }`;
+        const char = text.indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Non-store ctx.commit should not resolve as Vuex');
+    });
+
+    it('should not leak bare commit definition across sibling action scopes', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action({ commit }) { commit('SET_NAME') }\nfunction factoryReset({}) { commit('SET_NAME') }`;
+        const char = text.split('\n')[1].indexOf('SET_NAME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Bare commit in sibling scope should not resolve');
+    });
+
     it('should prefer root action when dispatch alias uses options variable with root true', async () => {
         const provider = new VuexDefinitionProvider(new MockStoreIndexer());
         const text = `const opts = { root: true }; function action({ dispatch: d }) { d('fetchProfile', null, opts) }`;
@@ -512,6 +554,40 @@ describe('VuexDefinitionProvider rootState/rootGetters', () => {
         assert.ok(definition, 'Definition should be resolved');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 40);
+    });
+
+    it('should jump to root state for context.rootState.name in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.rootState.name }`;
+        const char = text.indexOf('context.rootState.name') + 'context.rootState.'.length + 1;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 0);
+    });
+
+    it('should not jump for context.rootState.name in non-store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function helper(context) { return context.rootState.name }`;
+        const char = text.indexOf('context.rootState.name') + 'context.rootState.'.length + 1;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Non-store context.rootState should not resolve');
+    });
+
+    it('should jump to root getter for context.rootGetters.isAdmin in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.rootGetters.isAdmin }`;
+        const char = text.indexOf('isAdmin') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user/actions.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/index.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 50);
     });
 });
 
@@ -879,6 +955,28 @@ describe('VuexDefinitionProvider optional-chain state access', () => {
 });
 
 describe('VuexDefinitionProvider internal getters access', () => {
+    it('should jump to local state for context.state.profile in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for context.state');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 10);
+    });
+
+    it('should not resolve context.state.profile in non-store file', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function helper(context) { return context.state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Non-store context.state should not resolve');
+    });
+
     it('should jump to local getter for getters.isActive in module context', async () => {
         const provider = new VuexDefinitionProvider(new MockStoreIndexer());
         const text = `const g = (state, getters) => { return getters.isActive }`;
@@ -909,5 +1007,27 @@ describe('VuexDefinitionProvider internal getters access', () => {
 
         const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
         assert.strictEqual(definition, undefined, 'Shadowed local getters variable should not resolve to Vuex getter');
+    });
+
+    it('should not resolve bare state access when action context omits state binding', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action({}) { return state.profile }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Bare state without binding should not resolve');
+    });
+
+    it('should jump to local getter for context.getters.isActive in module context', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `function action(context) { return context.getters.isActive }`;
+        const char = text.indexOf('isActive') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should be resolved for context.getters');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 40);
     });
 });

@@ -19,6 +19,7 @@ interface HelperContext {
     functionAliasMap: Record<string, { helperName: HelperName; namespace?: string }>;
     objectNamespaceMap: Record<string, string>;
     callAliasMap: Record<string, 'commit' | 'dispatch'>;
+    contextObjectNames: Set<string>;
     thisAliases: Set<string>;
 }
 
@@ -31,6 +32,10 @@ export class VuexContextScanner {
     private static readonly ALIAS_ASSIGN_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(commit|dispatch)\b/g;
     private static readonly THIS_ALIAS_REGEX = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
     private static readonly DESTRUCTURE_REGEX = /\{([^{}]*\b(?:commit|dispatch)\b[^{}]*)\}/g;
+    private static readonly FUNCTION_PARAM_REGEX = /\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*\(\s*([A-Za-z_$][\w$]*)\s*(?:,|\))/g;
+    private static readonly METHOD_PARAM_REGEX = /\b(?:async\s+)?[A-Za-z_$][\w$]*\s*\(\s*([A-Za-z_$][\w$]*)\s*(?:,|\))/g;
+    private static readonly ARROW_PARAM_REGEX = /\b([A-Za-z_$][\w$]*)\s*=>/g;
+    private static readonly ARROW_PAREN_PARAM_REGEX = /\(\s*([A-Za-z_$][\w$]*)\s*(?:,|\))\s*=>/g;
     private static readonly SEARCH_WINDOW_BEFORE = 6000;
     private static readonly SEARCH_WINDOW_AFTER = 1200;
 
@@ -371,17 +376,27 @@ export class VuexContextScanner {
                 }
 
                 const callAliasMethod = helperContext.callAliasMap[func];
-                const effectiveMethod = (callAliasMethod || func) as 'commit' | 'dispatch' | string;
-                if (['commit', 'dispatch'].includes(effectiveMethod)) {
+                const parentObject = frame.precedingParentObject;
+                const isThisStoreMethod =
+                    frame.precedingObject === '$store' &&
+                    (parentObject === 'this' || helperContext.thisAliases.has(parentObject));
+                const isImportedStoreMethod =
+                    !!frame.precedingObject && storeLikeNames.has(frame.precedingObject);
+                const directMethod =
+                    (func === 'commit' || func === 'dispatch') &&
+                    frame.precedingObject &&
+                    (
+                        helperContext.contextObjectNames.has(frame.precedingObject) ||
+                        isThisStoreMethod ||
+                        isImportedStoreMethod
+                    )
+                        ? func
+                        : undefined;
+                const effectiveMethod = (callAliasMethod || directMethod) as 'commit' | 'dispatch' | undefined;
+                if (effectiveMethod === 'commit' || effectiveMethod === 'dispatch') {
                     let type: VuexContextType = 'unknown';
                      if (effectiveMethod === 'commit') type = 'mutation';
                      if (effectiveMethod === 'dispatch') type = 'action';
-                    const parentObject = frame.precedingParentObject;
-                    const isThisStoreMethod =
-                        frame.precedingObject === '$store' &&
-                        (parentObject === 'this' || helperContext.thisAliases.has(parentObject));
-                    const isImportedStoreMethod =
-                        !!frame.precedingObject && storeLikeNames.has(frame.precedingObject);
                     const isStoreMethod = isThisStoreMethod || isImportedStoreMethod;
                     return {
                          type,
@@ -412,10 +427,8 @@ export class VuexContextScanner {
             mapActions: { helperName: 'mapActions' }
         };
         const objectNamespaceMap: Record<string, string> = {};
-        const callAliasMap: Record<string, 'commit' | 'dispatch'> = {
-            commit: 'commit',
-            dispatch: 'dispatch'
-        };
+        const callAliasMap: Record<string, 'commit' | 'dispatch'> = {};
+        const contextObjectNames = new Set<string>();
         const thisAliases = new Set<string>(['this']);
         const stringConstants: Record<string, string> = {};
         const namespacedFactoryNames = new Set<string>(['createNamespacedHelpers']);
@@ -426,6 +439,21 @@ export class VuexContextScanner {
             if (quoted) return quoted[1];
             return stringConstants[trimmed];
         };
+
+        const collectParamNames = (regex: RegExp) => {
+            regex.lastIndex = 0;
+            for (const match of snippet.matchAll(regex)) {
+                const paramName = match[1];
+                if (paramName) {
+                    contextObjectNames.add(paramName);
+                }
+            }
+        };
+
+        collectParamNames(VuexContextScanner.FUNCTION_PARAM_REGEX);
+        collectParamNames(VuexContextScanner.METHOD_PARAM_REGEX);
+        collectParamNames(VuexContextScanner.ARROW_PARAM_REGEX);
+        collectParamNames(VuexContextScanner.ARROW_PAREN_PARAM_REGEX);
 
         VuexContextScanner.CONSTANT_REGEX.lastIndex = 0;
         for (const match of snippet.matchAll(VuexContextScanner.CONSTANT_REGEX)) {
@@ -514,17 +542,18 @@ export class VuexContextScanner {
         for (const match of snippet.matchAll(VuexContextScanner.ALIAS_ASSIGN_REGEX)) {
             const localName = match[1];
             const sourceName = match[2] as 'commit' | 'dispatch';
-            if (localName && sourceName) {
+            if (localName && sourceName && callAliasMap[sourceName]) {
                 callAliasMap[localName] = sourceName;
             }
         }
 
         const memberAliasAssignRegex =
-            /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:this(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*|[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)\s*\??\.\s*(commit|dispatch)\b/g;
+            /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:this(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*|([A-Za-z_$][\w$]*)(?:\s*\??\.\s*[A-Za-z_$][\w$]*)*)\s*\??\.\s*(commit|dispatch)\b/g;
         for (const match of snippet.matchAll(memberAliasAssignRegex)) {
             const localName = match[1];
-            const sourceName = match[2] as 'commit' | 'dispatch';
-            if (localName && sourceName) {
+            const sourceObject = match[2];
+            const sourceName = match[3] as 'commit' | 'dispatch';
+            if (localName && sourceName && sourceObject && contextObjectNames.has(sourceObject)) {
                 callAliasMap[localName] = sourceName;
             }
         }
@@ -555,6 +584,6 @@ export class VuexContextScanner {
             });
         }
 
-        return { functionAliasMap, objectNamespaceMap, callAliasMap, thisAliases };
+        return { functionAliasMap, objectNamespaceMap, callAliasMap, contextObjectNames, thisAliases };
     }
 }

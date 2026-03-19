@@ -107,7 +107,9 @@ const actions = {
   /**
    * 恢复出厂设置
    */
-  async factoryReset({ commit, dispatch }) {
+  async factoryReset() {
+    state.language
+    getters.isDarkMode
     commit("RESET_SETTINGS");
     await dispatch("updateVersion", "1.0.0");
   },

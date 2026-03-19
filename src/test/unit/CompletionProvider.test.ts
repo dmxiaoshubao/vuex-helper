@@ -484,6 +484,111 @@ describe('VuexCompletionItemProvider', () => {
         assert.ok(localItem, 'Member alias commit should suggest local mutation');
     });
 
+    it('should not provide commit completion when action context does not declare commit', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action({}) { commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.strictEqual(items.length, 0, 'Bare commit without binding should not trigger Vuex completion');
+    });
+
+    it('should not leak bare commit completion across sibling action scopes', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action({ commit }) { commit('SET_NAME') }\nfunction factoryReset({}) { commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: (pos: any) => {
+                const lines = text.split('\n');
+                let offset = 0;
+                for (let i = 0; i < pos.line; i++) {
+                    offset += (lines[i] || '').length + 1;
+                }
+                return offset + pos.character;
+            },
+            lineAt: (lineOrPos: any) => {
+                const lines = text.split('\n');
+                const lineNum = typeof lineOrPos === 'number' ? lineOrPos : lineOrPos.line;
+                return { text: lines[lineNum] || '' };
+            },
+            positionAt: (offset: number) => {
+                const lines = text.split('\n');
+                let remaining = offset;
+                for (let i = 0; i < lines.length; i++) {
+                    const lineLength = (lines[i] || '').length;
+                    if (remaining <= lineLength) {
+                        return { line: i, character: remaining };
+                    }
+                    remaining -= lineLength + 1;
+                }
+                return { line: lines.length - 1, character: (lines[lines.length - 1] || '').length };
+            },
+            lineCount: text.split('\n').length,
+        } as any;
+        const position = { line: 1, character: text.split('\n')[1].length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.strictEqual(items.length, 0, 'Bare commit in sibling scope should not trigger Vuex completion');
+    });
+
+    it('should support direct context.commit completion in module context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action(ctx) { ctx.commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        const localItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(localItem, 'context.commit should suggest local mutation');
+    });
+
+    it('should support direct context optional-chain commit completion in module context', async () => {
+        const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+        const text = `function action(ctx) { ctx?.commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/store/modules/user/actions.js',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        const localItem = items.find((i: any) => i.label === 'SET_NAME');
+        assert.ok(localItem, 'context?.commit should suggest local mutation');
+    });
+
+    it('should not provide context.commit completion in non-store file', async () => {
+        const text = `function helper(ctx) { ctx.commit('`;
+        const document = {
+            fileName: '/mock/workspace/src/components/App.vue',
+            getText: () => text,
+            offsetAt: () => text.length,
+            lineAt: () => ({ text })
+        } as any;
+        const position = { line: 0, character: text.length } as any;
+
+        const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+        const items = getItems(result);
+        assert.strictEqual(items.length, 0, 'Non-store ctx.commit should not trigger Vuex completion');
+    });
+
     it('should support dispatch alias with options variable root true', async () => {
         const providerWithRoot = new VuexCompletionItemProvider(new RootOptionMockStoreIndexer());
         const text = `const opts = { root: true }; function action({ dispatch: d }) { d('fetchProfile', null, opts) }`;
@@ -1746,6 +1851,18 @@ export default {
             assert.ok(userModule, 'Should find module "user"');
         });
 
+        it('should not provide rootState completion when binding is absent', async () => {
+            const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+            const text = `function action({}) { rootState. }`;
+            const cursor = text.indexOf('rootState.') + 'rootState.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.strictEqual(items.length, 0, 'rootState without binding should not trigger Vuex completion');
+        });
+
         it('should provide rootState nested completion', async () => {
             const text = `function action({ rootState }) { rootState.user. }`;
             const cursor = text.indexOf('rootState.user.') + 'rootState.user.'.length;
@@ -1758,6 +1875,33 @@ export default {
 
             const infoItem = items.find((i: any) => i.label === 'info');
             assert.ok(infoItem, 'Should find user module state "info"');
+        });
+
+        it('should provide context.rootState nested completion', async () => {
+            const text = `function action(context) { context.rootState.user. }`;
+            const cursor = text.indexOf('context.rootState.user.') + 'context.rootState.user.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            const infoItem = items.find((i: any) => i.label === 'info');
+            assert.ok(infoItem, 'context.rootState should provide nested root state completion');
+        });
+
+        it('should not provide context.rootState completion in non-store file', async () => {
+            const text = `function helper(context) { context.rootState.user. }`;
+            const cursor = text.indexOf('context.rootState.user.') + 'context.rootState.user.'.length;
+            const document = {
+                ...createVueDocument(text),
+                fileName: '/mock/workspace/src/components/App.vue',
+                uri: { toString: () => 'file:///mock/workspace/src/components/App.vue' },
+            } as any;
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.strictEqual(items.length, 0, 'Non-store context.rootState should not trigger Vuex completion');
         });
 
         it('should provide rootGetters dot completion', async () => {
@@ -1779,6 +1923,18 @@ export default {
             assert.ok(hasRoleItem, 'Should find namespaced getter "others/hasRole"');
             // 命名空间 getter 用方括号插入
             assert.strictEqual(hasRoleItem.insertText, "['others/hasRole']", 'Namespaced getter should use bracket insertion');
+        });
+
+        it('should provide context.rootGetters dot completion', async () => {
+            const text = `function action(ctx) { ctx.rootGetters. }`;
+            const cursor = text.indexOf('ctx.rootGetters.') + 'ctx.rootGetters.'.length;
+            const document = createVueDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            const isLoggedInItem = items.find((i: any) => i.label === 'isLoggedIn');
+            assert.ok(isLoggedInItem, 'context.rootGetters should provide root getter completion');
         });
 
         it('should provide rootGetters bracket completion', async () => {
@@ -1861,6 +2017,31 @@ export default {
             assert.ok(!rootItem, 'Should not include root getter "isLoggedIn"');
         });
 
+        it('should provide in-module state completion for context.state.', async () => {
+            const provider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+            const text = `function action(context) { context.state. }`;
+            const cursor = text.indexOf('context.state.') + 'context.state.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            const infoItem = items.find((i: any) => i.label === 'info');
+            assert.ok(infoItem, 'context.state should provide local state completion');
+        });
+
+        it('should not provide in-module state completion when state binding is absent', async () => {
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `function action({}) { state. }`;
+            const cursor = text.indexOf('state.') + 'state.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.strictEqual(items.length, 0, 'state without binding should not trigger Vuex completion');
+        });
+
         it('should not provide in-module getters completion for rootGetters.', async () => {
             // rootGetters. 不应被内部 getters 逻辑拦截
             const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
@@ -1886,6 +2067,35 @@ export default {
             const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
             const items = getItems(result);
             assert.strictEqual(items.length, 0, 'Shadowed local getters variable should not trigger Vuex completion');
+        });
+
+        it('should provide in-module getters completion for context.getters.', async () => {
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `function action(ctx) { ctx.getters. }`;
+            const cursor = text.indexOf('ctx.getters.') + 'ctx.getters.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            const upperNameItem = items.find((i: any) => i.label === 'upperName');
+            assert.ok(upperNameItem, 'context.getters should provide local getter completion');
+        });
+
+        it('should not provide context.state completion in non-store file', async () => {
+            const provider = new VuexCompletionItemProvider(new InModuleGettersMockStoreIndexer());
+            const text = `function helper(context) { context.state. }`;
+            const cursor = text.indexOf('context.state.') + 'context.state.'.length;
+            const document = {
+                ...createStoreDocument(text),
+                fileName: '/mock/workspace/src/components/App.vue',
+                uri: { toString: () => 'file:///mock/workspace/src/components/App.vue' },
+            } as any;
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.strictEqual(items.length, 0, 'Non-store context.state should not trigger Vuex completion');
         });
     });
 

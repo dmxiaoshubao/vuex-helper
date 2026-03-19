@@ -7,12 +7,15 @@ import { PathResolver } from '../utils/PathResolver';
 import {
     collectStoreLikeNames,
     extractStateAccessPath,
+    extractContextAccessPath,
     extractRootAccessPath,
     extractStringLiteralPathAtPosition,
     detectStoreBracketAccessor,
     extractStoreAccessPath,
     hasChainedPropertySuffix,
     hasRootTrueOption,
+    hasScopedVuexCallContext,
+    hasParamContextMemberAccess,
     hasParamBindingMemberAccess,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
@@ -88,10 +91,15 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         // 2. Local State Definition (state.xxx)
         // Check if preceding text ends with "state."
         const stateAccessPath = extractStateAccessPath(rawPrefix, word);
+        const contextStateAccessPath = extractContextAccessPath(rawPrefix, word, 'state');
+        const contextGettersAccessPath = extractContextAccessPath(rawPrefix, word, 'getters');
 
         // 2a. rootState.xxx — 从根开始查找 state
         const rootStateAccessPath = extractRootAccessPath(rawPrefix, word, 'rootState');
-        if (rootStateAccessPath) {
+        if (
+            rootStateAccessPath &&
+            hasParamBindingMemberAccess(document, position, 'rootState', currentNamespace)
+        ) {
             // 检查 word 右侧是否有后续 ".xxx"，如果有则当前词是中间路径词
             const rawSuffix = lineText.substring(range.end.character);
             if (hasChainedPropertySuffix(rawSuffix)) {
@@ -103,10 +111,35 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             return this.findDefinition(rootStateAccessPath, 'state');
         }
 
+        const contextRootStateAccessPath = extractContextAccessPath(rawPrefix, word, 'rootState');
+        if (
+            contextRootStateAccessPath &&
+            hasParamContextMemberAccess(document, position, 'rootState', currentNamespace)
+        ) {
+            const rawSuffix = lineText.substring(range.end.character);
+            if (hasChainedPropertySuffix(rawSuffix)) {
+                const nsSegments = contextRootStateAccessPath.replace(/\./g, '/');
+                const moduleDef = this.findModuleDefinition(nsSegments);
+                if (moduleDef) return moduleDef;
+            }
+            return this.findDefinition(contextRootStateAccessPath, 'state');
+        }
+
         // 2b. rootGetters.xxx — 用 extractRootAccessPath 统一处理
         const rootGettersAccessPath = extractRootAccessPath(rawPrefix, word, 'rootGetters');
-        if (rootGettersAccessPath) {
+        if (
+            rootGettersAccessPath &&
+            hasParamBindingMemberAccess(document, position, 'rootGetters', currentNamespace)
+        ) {
             return this.findDefinition(rootGettersAccessPath, 'getter');
+        }
+
+        const contextRootGettersAccessPath = extractContextAccessPath(rawPrefix, word, 'rootGetters');
+        if (
+            contextRootGettersAccessPath &&
+            hasParamContextMemberAccess(document, position, 'rootGetters', currentNamespace)
+        ) {
+            return this.findDefinition(contextRootGettersAccessPath, 'getter');
         }
 
         // 2c. Bracket Notation: rootGetters['...'] / this.$store.getters['...']
@@ -133,17 +166,37 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
 
 
-        if (currentNamespace && /\bstate(?:\?\.|\.)$/.test(rawPrefix)) {
+        if (
+            currentNamespace &&
+            /\bstate(?:\?\.|\.)$/.test(rawPrefix) &&
+            hasParamBindingMemberAccess(document, position, 'state', currentNamespace)
+        ) {
              return this.findDefinition(word, 'state', currentNamespace.join('/'));
+        }
+
+        if (
+            currentNamespace &&
+            contextStateAccessPath &&
+            hasParamContextMemberAccess(document, position, 'state', currentNamespace)
+        ) {
+            return this.findDefinition(contextStateAccessPath, 'state', undefined, currentNamespace);
         }
 
         // 2c-2. 内部 getters.xxx 跳转（排除 rootGetters）
         if (
             currentNamespace &&
             /(?<!\.|root)\bgetters(?:\?\.|\.)$/.test(rawPrefix) &&
-            hasParamBindingMemberAccess(document, position, 'getters')
+            hasParamBindingMemberAccess(document, position, 'getters', currentNamespace)
         ) {
              return this.findDefinition(word, 'getter', currentNamespace.join('/'));
+        }
+
+        if (
+            currentNamespace &&
+            contextGettersAccessPath &&
+            hasParamContextMemberAccess(document, position, 'getters', currentNamespace)
+        ) {
+             return this.findDefinition(contextGettersAccessPath, 'getter', undefined, currentNamespace);
         }
 
         // 2d. this.$store.state.xxx.yyy / this.$store?.getters.xxx — 通用链式访问（含可选链）
@@ -172,15 +225,22 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         const context = this.scanner.getContext(document, position, storeLikeNameSet);
         if (token.isCancellationRequested) return undefined;
         // Re-check context with awareness of current file namespace
-        if (context && context.type !== 'unknown') {
+        const scopedContext =
+            context &&
+            (context.method !== 'commit' && context.method !== 'dispatch' ||
+                context.isStoreMethod === true ||
+                hasScopedVuexCallContext(document, position, context.method, currentNamespace))
+                ? context
+                : undefined;
+        if (scopedContext && scopedContext.type !== 'unknown') {
             const preferLocalFromContext = !(
-                (context.method === 'commit' || context.method === 'dispatch') &&
+                (scopedContext.method === 'commit' || scopedContext.method === 'dispatch') &&
                 (
-                    context.isStoreMethod === true ||
-                    hasRootTrueOption(document, position, context.method, context.calleeName)
+                    scopedContext.isStoreMethod === true ||
+                    hasRootTrueOption(document, position, scopedContext.method, scopedContext.calleeName)
                 )
             );
-            if (context.type === 'state' && stateAccessPath) {
+            if (scopedContext.type === 'state' && stateAccessPath) {
                 // 功能 3 补充：在 state 上下文中检查中间路径词的 module 跳转
                 // 例如 state.user.name 中点击 user，stateAccessPath = "user"
                 // 需要检查 word 右侧是否还有 ".xxx" 后续路径
@@ -189,13 +249,13 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                     // word 右侧还有后续路径（如 ".name"），说明 word 是中间路径词
                     const nsFromPath = stateAccessPath; // stateAccessPath 已经包含了 word 及其左侧路径
                     const nsSegments = nsFromPath.replace(/\./g, '/');
-                    const fullNs = context.namespace
-                        ? `${context.namespace}/${nsSegments}`
+                    const fullNs = scopedContext.namespace
+                        ? `${scopedContext.namespace}/${nsSegments}`
                         : nsSegments;
                     const moduleDef = this.findModuleDefinition(fullNs);
                     if (moduleDef) return moduleDef;
                 }
-                return this.findDefinition(stateAccessPath, 'state', context.namespace, currentNamespace, preferLocalFromContext);
+                return this.findDefinition(stateAccessPath, 'state', scopedContext.namespace, currentNamespace, preferLocalFromContext);
             }
             // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
             // Note: extractStringLiteralPathAtPosition result is reused from earlier call
@@ -204,9 +264,9 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             // mapState/mapGetters/mapMutations/mapActions('namespace', [...])
             // 首参是独立 namespace 时，跳转到对应模块文件。
             if (
-                context.method === 'mapHelper' &&
-                context.argumentIndex === 0 &&
-                context.isNested !== true &&
+                scopedContext.method === 'mapHelper' &&
+                scopedContext.argumentIndex === 0 &&
+                scopedContext.isNested !== true &&
                 explicitPath
             ) {
                 const moduleDef = this.findModuleDefinition(explicitPath);
@@ -225,10 +285,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
                 }
 
                 if (nameFromPath && namespaceFromPath) {
-                    return this.findDefinition(nameFromPath, context.type, namespaceFromPath, currentNamespace, preferLocalFromContext);
+                    return this.findDefinition(nameFromPath, scopedContext.type, namespaceFromPath, currentNamespace, preferLocalFromContext);
                 }
             }
-            return this.findDefinition(word, context.type, context.namespace, currentNamespace, preferLocalFromContext);
+            return this.findDefinition(word, scopedContext.type, scopedContext.namespace, currentNamespace, preferLocalFromContext);
         }
 
         return undefined;
