@@ -252,6 +252,34 @@ async function waitForHovers(
     throw new Error(`Hovers did not reach expected state within timeout: ${lastHovers.map(hoverToString).join(' | ')}`);
 }
 
+async function withTemporaryTokenPrefix<T>(
+    document: vscode.TextDocument,
+    anchor: string,
+    token: string,
+    typedPrefixLength: number,
+    run: (editedDocument: vscode.TextDocument, position: vscode.Position) => Promise<T>,
+    occurrence = 1,
+): Promise<T> {
+    const editor = await vscode.window.showTextDocument(document);
+    const start = findPositionInAnchor(document, anchor, token, occurrence);
+    const originalEnd = new vscode.Position(start.line, start.character + token.length);
+    const prefix = token.slice(0, typedPrefixLength);
+    const editedEnd = new vscode.Position(start.line, start.character + prefix.length);
+
+    const applied = await editor.edit((editBuilder) => {
+        editBuilder.replace(new vscode.Range(start, originalEnd), prefix);
+    });
+    assert.ok(applied, `Failed to prepare temporary completion prefix for "${token}"`);
+
+    try {
+        return await run(editor.document, editedEnd);
+    } finally {
+        await editor.edit((editBuilder) => {
+            editBuilder.replace(new vscode.Range(start, editedEnd), token);
+        });
+    }
+}
+
 function p95(values: number[]): number {
     const sorted = values.slice().sort((a, b) => a - b);
     const idx = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
@@ -453,10 +481,68 @@ describe('Host Diagnostics', function () {
             `Nested plain root object leaf should resolve to root store, got: ${definitions.map((item) => getDefinitionUri(item).fsPath).join(', ')}`
         );
     });
+
+    it('should keep inherited namespace access clean and warn for invalid context members in real module files', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+        const warmupFile = path.join(workspaceRoot, 'src/main.js');
+        const accountFile = path.join(workspaceRoot, 'src/store/modules/account/index.js');
+        const profileFile = path.join(workspaceRoot, 'src/store/modules/account/profile.js');
+
+        await openDocumentForProviders(warmupFile);
+        await ensureExtensionActivated();
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        await sleep(1000);
+
+        const accountDocument = await openDocumentForProviders(accountFile);
+        const accountWarningPosition = findPositionInAnchor(
+            accountDocument,
+            'return context.state.missingAccountState; // <- 应触发诊断',
+            'missingAccountState',
+            1,
+            2,
+        );
+        const accountDiagnostics = await waitForDiagnostics(accountDocument, (items) =>
+            hasWarningAtPosition(items, accountWarningPosition, 'missingAccountState')
+        );
+        assert.ok(
+            hasWarningAtPosition(accountDiagnostics, accountWarningPosition, 'missingAccountState'),
+            'Expected warning for invalid context.state access in account module',
+        );
+
+        const profileDocument = await openDocumentForProviders(profileFile);
+        const inheritedGetterPosition = findPositionInAnchor(
+            profileDocument,
+            'context.getters.readyLabel; // <- 光标放 readyLabel 上',
+            'readyLabel',
+            1,
+            2,
+        );
+        const missingGetterPosition = findPositionInAnchor(
+            profileDocument,
+            'return context.getters.missingInheritedGetter; // <- 应触发诊断',
+            'missingInheritedGetter',
+            1,
+            2,
+        );
+        const profileDiagnostics = await waitForDiagnostics(profileDocument, (items) =>
+            !hasAnyDiagnosticAtPosition(items, inheritedGetterPosition) &&
+            hasWarningAtPosition(items, missingGetterPosition, 'missingInheritedGetter')
+        );
+        assert.ok(
+            !hasAnyDiagnosticAtPosition(profileDiagnostics, inheritedGetterPosition),
+            'Inherited namespace getter access should stay clean in child module',
+        );
+        assert.ok(
+            hasWarningAtPosition(profileDiagnostics, missingGetterPosition, 'missingInheritedGetter'),
+            'Expected warning for invalid inherited namespace getter access',
+        );
+    });
 });
 
 describe('Host Completion', function () {
-    this.timeout(20000);
+    this.timeout(40000);
 
     it('should provide module-scoped completions for real store commit and dispatch calls', async () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -515,42 +601,45 @@ describe('Host Completion', function () {
 
         const document = await openDocumentForProviders(userFile);
 
-        const rootStatePosition = findPositionInAnchor(
+        const rootStateItems = await withTemporaryTokenPrefix(
             document,
             'rootState.count; // <- 光标放点后',
             'count',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('count') && labels.includes('user') && labels.includes('others');
+            }),
         );
-        const rootStateItems = await waitForCompletionItems(document, rootStatePosition, (items) => {
-            const labels = items.map(getCompletionLabel);
-            return labels.includes('count') && labels.includes('user') && labels.includes('others');
-        });
         const rootStateLabels = rootStateItems.map(getCompletionLabel);
         assert.ok(rootStateLabels.includes('count'), 'Expected rootState completion to include count');
         assert.ok(rootStateLabels.includes('user'), 'Expected rootState completion to include user module');
         assert.ok(rootStateLabels.includes('others'), 'Expected rootState completion to include others module');
 
-        const nestedRootStatePosition = findPositionInAnchor(
+        const nestedRootStateItems = await withTemporaryTokenPrefix(
             document,
             'rootState.others.productName; // <- 光标放最后一个点后',
             'productName',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('productName') && labels.includes('theme');
+            }),
         );
-        const nestedRootStateItems = await waitForCompletionItems(document, nestedRootStatePosition, (items) => {
-            const labels = items.map(getCompletionLabel);
-            return labels.includes('productName') && labels.includes('theme');
-        });
         const nestedRootStateLabels = nestedRootStateItems.map(getCompletionLabel);
         assert.ok(nestedRootStateLabels.includes('productName'), 'Expected nested rootState completion to include productName');
         assert.ok(nestedRootStateLabels.includes('theme'), 'Expected nested rootState completion to include theme');
 
-        const rootGettersDotPosition = findPositionInAnchor(
+        const rootGetterItems = await withTemporaryTokenPrefix(
             document,
             'rootGetters.isLoggedIn; // <- 光标放点后',
             'isLoggedIn',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('isLoggedIn') && labels.includes('user/upperName');
+            }),
         );
-        const rootGetterItems = await waitForCompletionItems(document, rootGettersDotPosition, (items) => {
-            const labels = items.map(getCompletionLabel);
-            return labels.includes('isLoggedIn') && labels.includes('user/upperName');
-        });
         const rootGetterLabels = rootGetterItems.map(getCompletionLabel);
         assert.ok(rootGetterLabels.includes('isLoggedIn'), 'Expected rootGetters dot completion to include isLoggedIn');
         assert.ok(rootGetterLabels.includes('user/upperName'), 'Expected rootGetters dot completion to include namespaced getter');
@@ -671,5 +760,288 @@ describe('Host Completion', function () {
             hovers.some((hover) => hoverToString(hover).includes('others/SET_THEME'))
         );
         assert.ok(mappedHovers.some((hover) => hoverToString(hover).includes('others/SET_THEME')), 'Expected mapped bracket hover to include others/SET_THEME');
+    });
+
+    it('should support context members and object-style root actions in real namespaced module files', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+        const warmupFile = path.join(workspaceRoot, 'src/main.js');
+        const accountFile = path.join(workspaceRoot, 'src/store/modules/account/index.js');
+
+        await openDocumentForProviders(warmupFile);
+        await ensureExtensionActivated();
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        await sleep(1000);
+
+        const document = await openDocumentForProviders(accountFile);
+
+        const rootTrueHandlerCommitItems = await withTemporaryTokenPrefix(
+            document,
+            'context.commit("SET_READY", true); // <- 光标放 SET_READY 上',
+            'SET_READY',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('SET_READY') && labels.includes('SET_PUBLISH_COUNT');
+            }),
+        );
+        const rootTrueHandlerCommitLabels = rootTrueHandlerCommitItems.map(getCompletionLabel);
+        assert.ok(rootTrueHandlerCommitLabels.includes('SET_READY'), 'Expected root:true handler local commit completion to include SET_READY');
+        assert.ok(rootTrueHandlerCommitLabels.includes('SET_PUBLISH_COUNT'), 'Expected root:true handler local commit completion to include SET_PUBLISH_COUNT');
+        assert.ok(!rootTrueHandlerCommitLabels.includes('increment'), 'Root:true handler local commit completion should stay module-scoped without root option');
+
+        const rootTrueHandlerCommitPosition = findPositionInAnchor(
+            document,
+            'context.commit("SET_READY", true); // <- 光标放 SET_READY 上',
+            'SET_READY',
+            1,
+            2,
+        );
+        const rootTrueHandlerCommitDefinitions = await waitForDefinitions(document, rootTrueHandlerCommitPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            rootTrueHandlerCommitDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected root:true handler local commit definition to resolve to account/index.js',
+        );
+
+        const rootTrueHandlerCommitHovers = await waitForHovers(document, rootTrueHandlerCommitPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('SET_READY'))
+        );
+        assert.ok(rootTrueHandlerCommitHovers.some((hover) => hoverToString(hover).includes('SET_READY')), 'Expected root:true handler local commit hover to include SET_READY');
+
+        const rootTrueHandlerStateItems = await withTemporaryTokenPrefix(
+            document,
+            'context.state.ready; // <- 光标放 ready 上',
+            'ready',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('ready') && labels.includes('publishCount');
+            }),
+        );
+        const rootTrueHandlerStateLabels = rootTrueHandlerStateItems.map(getCompletionLabel);
+        assert.ok(rootTrueHandlerStateLabels.includes('ready'), 'Expected root:true handler context.state completion to include ready');
+        assert.ok(rootTrueHandlerStateLabels.includes('publishCount'), 'Expected root:true handler context.state completion to include publishCount');
+
+        const statePosition = findPositionInAnchor(
+            document,
+            'return context.state.ready; // <- 光标放 ready 上',
+            'ready',
+            1,
+            2,
+        );
+        const stateDefinitions = await waitForDefinitions(document, statePosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            stateDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected root:true handler context.state definition to resolve to account/index.js',
+        );
+
+        const stateHovers = await waitForHovers(document, statePosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('ready'))
+        );
+        assert.ok(stateHovers.some((hover) => hoverToString(hover).includes('ready')), 'Expected root:true handler context.state hover to include ready');
+
+        const getterItems = await withTemporaryTokenPrefix(
+            document,
+            'context.getters.readyLabel; // <- 光标放 readyLabel 上',
+            'readyLabel',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('readyLabel') && labels.includes('publishSummary');
+            }),
+        );
+        const getterLabels = getterItems.map(getCompletionLabel);
+        assert.ok(getterLabels.includes('readyLabel'), 'Expected root:false handler context.getters completion to include readyLabel');
+        assert.ok(getterLabels.includes('publishSummary'), 'Expected root:false handler context.getters completion to include publishSummary');
+
+        const getterPosition = findPositionInAnchor(
+            document,
+            'context.getters.readyLabel; // <- 光标放 readyLabel 上',
+            'readyLabel',
+            1,
+            2,
+        );
+        const getterDefinitions = await waitForDefinitions(document, getterPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            getterDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected root:false handler context.getters definition to resolve to account/index.js',
+        );
+
+        const getterHovers = await waitForHovers(document, getterPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('readyLabel'))
+        );
+        assert.ok(getterHovers.some((hover) => hoverToString(hover).includes('readyLabel')), 'Expected root:false handler context.getters hover to include readyLabel');
+
+        const rootFalseHandlerCommitItems = await withTemporaryTokenPrefix(
+            document,
+            'commit("SET_READY", true); // <- 光标放 SET_READY 上',
+            'SET_READY',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('SET_READY') && labels.includes('SET_PUBLISH_COUNT');
+            }),
+            2,
+        );
+        const rootFalseHandlerCommitLabels = rootFalseHandlerCommitItems.map(getCompletionLabel);
+        assert.ok(rootFalseHandlerCommitLabels.includes('SET_READY'), 'Expected implicit root:false handler destructured commit completion to include SET_READY');
+        assert.ok(rootFalseHandlerCommitLabels.includes('SET_PUBLISH_COUNT'), 'Expected implicit root:false handler destructured commit completion to include SET_PUBLISH_COUNT');
+        assert.ok(!rootFalseHandlerCommitLabels.includes('increment'), 'Implicit root:false handler destructured commit completion should stay module-scoped');
+
+        const rootFalseHandlerCommitPosition = findPositionInAnchor(
+            document,
+            'commit("SET_READY", true); // <- 光标放 SET_READY 上',
+            'SET_READY',
+            2,
+            2,
+        );
+        const rootFalseHandlerCommitDefinitions = await waitForDefinitions(document, rootFalseHandlerCommitPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            rootFalseHandlerCommitDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected implicit root:false handler destructured commit definition to resolve to account/index.js',
+        );
+
+        const rootFalseHandlerCommitHovers = await waitForHovers(document, rootFalseHandlerCommitPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('SET_READY'))
+        );
+        assert.ok(rootFalseHandlerCommitHovers.some((hover) => hoverToString(hover).includes('SET_READY')), 'Expected implicit root:false handler destructured commit hover to include SET_READY');
+
+        const rootActionPosition = findPositionInAnchor(
+            document,
+            'context.dispatch("publishProfile", null, { root: true }); // <- 光标放 publishProfile 上',
+            'publishProfile',
+            1,
+            2,
+        );
+        const rootActionItems = await waitForCompletionItems(document, rootActionPosition, (items) => {
+            const labels = items.map(getCompletionLabel);
+            return labels.includes('publishProfile') && labels.includes('login');
+        });
+        const rootActionLabels = rootActionItems.map(getCompletionLabel);
+        assert.ok(rootActionLabels.includes('publishProfile'), 'Expected root action completion to include publishProfile');
+        assert.ok(rootActionLabels.includes('login'), 'Expected root action completion to include login');
+        assert.ok(!rootActionLabels.includes('loadAccount'), 'Root action completion should not fall back to local namespaced actions');
+
+        const rootActionDefinitions = await waitForDefinitions(document, rootActionPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            rootActionDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected object-style root action definition to resolve to account/index.js',
+        );
+
+        const rootActionHovers = await waitForHovers(document, rootActionPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('publishProfile'))
+        );
+        assert.ok(rootActionHovers.some((hover) => hoverToString(hover).includes('publishProfile')), 'Expected root action hover to include publishProfile');
+    });
+
+    it('should support inherited namespace getters mutations and actions in child module files', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+        const warmupFile = path.join(workspaceRoot, 'src/main.js');
+        const profileFile = path.join(workspaceRoot, 'src/store/modules/account/profile.js');
+
+        await openDocumentForProviders(warmupFile);
+        await ensureExtensionActivated();
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        await sleep(1000);
+
+        const document = await openDocumentForProviders(profileFile);
+
+        const inheritedGetterItems = await withTemporaryTokenPrefix(
+            document,
+            'context.getters.readyLabel; // <- 光标放 readyLabel 上',
+            'readyLabel',
+            0,
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('readyLabel') && labels.includes('profileName');
+            }),
+        );
+        const inheritedGetterLabels = inheritedGetterItems.map(getCompletionLabel);
+        assert.ok(inheritedGetterLabels.includes('readyLabel'), 'Expected inherited getter completion to include parent getter');
+        assert.ok(inheritedGetterLabels.includes('profileName'), 'Expected inherited getter completion to include child getter');
+
+        const inheritedGetterPosition = findPositionInAnchor(
+            document,
+            'context.getters.readyLabel; // <- 光标放 readyLabel 上',
+            'readyLabel',
+            1,
+            2,
+        );
+        const inheritedGetterDefinitions = await waitForDefinitions(document, inheritedGetterPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            inheritedGetterDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected inherited getter definition to resolve to parent module',
+        );
+
+        const inheritedGetterHovers = await waitForHovers(document, inheritedGetterPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('readyLabel'))
+        );
+        assert.ok(inheritedGetterHovers.some((hover) => hoverToString(hover).includes('readyLabel')), 'Expected inherited getter hover to include readyLabel');
+
+        const inheritedMutationPosition = findPositionInAnchor(
+            document,
+            'context.commit("SET_READY", true);',
+            'SET_READY',
+            1,
+            2,
+        );
+        const inheritedMutationItems = await waitForCompletionItems(document, inheritedMutationPosition, (items) => {
+            const labels = items.map(getCompletionLabel);
+            return labels.includes('SET_READY') && labels.includes('SET_NICKNAME');
+        });
+        const inheritedMutationLabels = inheritedMutationItems.map(getCompletionLabel);
+        assert.ok(inheritedMutationLabels.includes('SET_READY'), 'Expected inherited mutation completion to include parent mutation');
+        assert.ok(inheritedMutationLabels.includes('SET_NICKNAME'), 'Expected inherited mutation completion to include child mutation');
+
+        const inheritedMutationDefinitions = await waitForDefinitions(document, inheritedMutationPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            inheritedMutationDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected inherited mutation definition to resolve to parent module',
+        );
+
+        const inheritedActionPosition = findPositionInAnchor(
+            document,
+            'context.dispatch("loadAccount");',
+            'loadAccount',
+            1,
+            2,
+        );
+        const inheritedActionItems = await waitForCompletionItems(document, inheritedActionPosition, (items) => {
+            const labels = items.map(getCompletionLabel);
+            return labels.includes('loadAccount') && labels.includes('renameProfile');
+        });
+        const inheritedActionLabels = inheritedActionItems.map(getCompletionLabel);
+        assert.ok(inheritedActionLabels.includes('loadAccount'), 'Expected inherited action completion to include parent action');
+        assert.ok(inheritedActionLabels.includes('renameProfile'), 'Expected inherited action completion to include child action');
+
+        const inheritedActionDefinitions = await waitForDefinitions(document, inheritedActionPosition, (definitions) =>
+            definitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js')))
+        );
+        assert.ok(
+            inheritedActionDefinitions.some((item) => getDefinitionUri(item).fsPath.endsWith(path.join('src', 'store', 'modules', 'account', 'index.js'))),
+            'Expected inherited action definition to resolve to parent module',
+        );
+
+        const inheritedActionHovers = await waitForHovers(document, inheritedActionPosition, (hovers) =>
+            hovers.some((hover) => hoverToString(hover).includes('loadAccount'))
+        );
+        assert.ok(inheritedActionHovers.some((hover) => hoverToString(hover).includes('loadAccount')), 'Expected inherited action hover to include loadAccount');
     });
 });

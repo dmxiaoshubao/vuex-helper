@@ -1084,6 +1084,29 @@ describe('VuexDefinitionProvider internal getters access', () => {
         assert.strictEqual((definition as any).rangeOrPosition.line, 40);
     });
 
+    it('should jump to local state for context.state.profile inside root:true object-style action handler even when handler comes before root', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `export default { actions: { saveProfile: { handler(context) { return context.state.profile }, root: true } } }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should resolve inside object-style action handler');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 10);
+    });
+
+    it('should jump to inherited mutation for bare commit inside object-style action handler destructuring when root is omitted', async () => {
+        const provider = new VuexDefinitionProvider(new InheritedNamespaceMockStoreIndexer());
+        const text = `export default { actions: { saveProfile: { handler({ commit }) { commit('SET_READY') } } } }`;
+        const char = text.indexOf('SET_READY') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/account/profile.js');
+
+        const definition = await provider.provideDefinition(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(definition, 'Definition should resolve for bare commit inside object-style action handler');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/account/index.js');
+    });
+
     it('should resolve inherited namespace parent getter for context.getters in non-namespaced child module', async () => {
         const provider = new VuexDefinitionProvider(new InheritedNamespaceMockStoreIndexer());
         const text = `function action(context) { return context.getters.readyLabel }`;

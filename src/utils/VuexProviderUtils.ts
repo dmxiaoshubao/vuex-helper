@@ -1266,6 +1266,11 @@ function resolveVuexHandlerSectionFromObjectExpression(objectExpressionPath: any
         if (keyName === 'actions' || keyName === 'getters' || keyName === 'mutations') {
             return keyName;
         }
+
+        const grandParentPath = parentPath.parentPath;
+        if (grandParentPath?.node?.type === 'ObjectExpression') {
+            return resolveVuexHandlerSectionFromObjectExpression(grandParentPath);
+        }
     }
 
     if (parentPath.node?.type === 'VariableDeclarator' && parentPath.node.id?.type === 'Identifier') {

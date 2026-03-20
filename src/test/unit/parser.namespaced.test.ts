@@ -167,11 +167,14 @@ describe('Vuex Parser Root Action Registration', () => {
                   namespaced: true,
                   actions: {
                     publishProfile: {
-                      root: true,
                       handler: saveHandler,
+                      root: true,
                     },
                     updateProfile: {
+                      handler() {},
                       root: false,
+                    },
+                    draftProfile: {
                       handler() {},
                     },
                     fetchProfile() {},
@@ -188,12 +191,16 @@ describe('Vuex Parser Root Action Registration', () => {
             const namespacedRegistered = storeMap.actions.find((item) => item.name === 'publishProfile' && item.modulePath.join('/') === 'user');
             const scopedDescriptor = storeMap.actions.find((item) => item.name === 'updateProfile' && item.modulePath.join('/') === 'user');
             const leakedScopedDescriptor = storeMap.actions.find((item) => item.name === 'updateProfile' && item.modulePath.length === 0);
+            const implicitScopedDescriptor = storeMap.actions.find((item) => item.name === 'draftProfile' && item.modulePath.join('/') === 'user');
+            const leakedImplicitDescriptor = storeMap.actions.find((item) => item.name === 'draftProfile' && item.modulePath.length === 0);
             const regularAction = storeMap.actions.find((item) => item.name === 'fetchProfile' && item.modulePath.join('/') === 'user');
 
             assert.ok(rootRegistered, 'root:true action descriptor should register as a root action');
             assert.strictEqual(namespacedRegistered, undefined, 'root:true action descriptor should not remain namespaced');
             assert.ok(scopedDescriptor, 'root:false action descriptor should remain namespaced');
             assert.strictEqual(leakedScopedDescriptor, undefined, 'root:false action descriptor should not leak to root');
+            assert.ok(implicitScopedDescriptor, 'Object-style action without root should default to namespaced registration');
+            assert.strictEqual(leakedImplicitDescriptor, undefined, 'Object-style action without root should not leak to root');
             assert.ok(regularAction, 'Regular action methods should keep their namespaced registration');
         } finally {
             removeWorkspace(root);

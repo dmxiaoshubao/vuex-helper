@@ -636,6 +636,33 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.ok(diags.some(d => d.message.includes('nonExistent')), 'Expected warning for invalid context.getters access');
     });
+
+    it('should warn for invalid context.state access inside root:true object-style action handler even when handler comes before root', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    saveProfile: {
+      handler(context) { return context.state.noSuchField; },
+      root: true
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.ok(diags.some(d => d.message.includes('noSuchField')), 'Expected warning for invalid context.state access inside action handler');
+    });
+
+    it('should not warn for valid bare commit inside object-style action handler destructuring when root is omitted', () => {
+        const doc = createDocument(`export default {
+  actions: {
+    saveProfile: {
+      handler({ commit }) {
+        commit('ADD_ITEM');
+      }
+    }
+  }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
+    });
 });
 
 describe('VuexDiagnosticProvider inherited namespace access', () => {

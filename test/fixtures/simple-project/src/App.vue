@@ -381,6 +381,8 @@ export default {
     // ========================================
 
     testCommit() {
+      this.$store.dispatch('account/refreshProfile')
+      this.$store.dispatch('account/publishProfile')
       // [9.1] commit 第一个参数 - mutation 名称
       // 测试: 在引号内输入，应显示所有 mutations
       this.$store.commit("addItem"); // <- 光标放引号内

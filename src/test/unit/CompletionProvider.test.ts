@@ -2110,6 +2110,31 @@ export default {
             assert.ok(upperNameItem, 'context.getters should provide local getter completion');
         });
 
+        it('should provide context.state completion inside root:true object-style action handler even when handler comes before root', async () => {
+            const provider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+            const text = `export default { actions: { saveProfile: { handler(context) { return context.state. }, root: true } } }`;
+            const cursor = text.indexOf('context.state.') + 'context.state.'.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items.find((i: any) => i.label === 'info'), 'Object-style action handler should provide context.state completion');
+        });
+
+        it('should provide bare commit completion inside object-style action handler destructuring when root is omitted', async () => {
+            const provider = new VuexCompletionItemProvider(new InheritedNamespaceStoreIndexer());
+            const text = `export default { actions: { saveProfile: { handler({ commit }) { commit('') } } } }`;
+            const cursor = text.indexOf(`commit('`) + `commit('`.length;
+            const document = createStoreDocument(text);
+            const position = { line: 0, character: cursor } as any;
+
+            const result = await provider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+            assert.ok(items.find((i: any) => i.label === 'SET_NAME'), 'Object-style action handler should include child mutation completion');
+            assert.ok(items.find((i: any) => i.label === 'SET_READY'), 'Object-style action handler should include inherited mutation completion');
+        });
+
         it('should provide inherited parent namespace getters for non-namespaced child modules', async () => {
             const provider = new VuexCompletionItemProvider(new InheritedNamespaceStoreIndexer());
             const text = `function action(ctx) { ctx.getters. }`;

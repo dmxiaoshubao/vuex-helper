@@ -121,7 +121,10 @@ class InheritedNamespaceHoverStoreIndexer extends StoreIndexer {
                 { name: 'readyLabel', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 5) },
                 { name: 'readyLabel', modulePath: [], defLocation: mkLoc('/mock/workspace/src/store/index.js', 40) }
             ],
-            mutations: [],
+            mutations: [
+                { name: 'SET_NAME', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/profile.js', 30) },
+                { name: 'SET_READY', modulePath: ['account'], defLocation: mkLoc('/mock/workspace/src/store/modules/account/index.js', 35) },
+            ],
             actions: []
         } as any;
     }
@@ -634,6 +637,32 @@ describe('VuexHoverProvider internal getters access', () => {
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('Getter: isActive'), 'Hover should include getter label');
         assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local getter definition');
+    });
+
+    it('should show hover for context.state.profile inside root:true object-style action handler even when handler comes before root', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `export default { actions: { saveProfile: { handler(context) { return context.state.profile }, root: true } } }`;
+        const char = text.indexOf('profile') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/user.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should resolve inside object-style action handler');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('State: profile'), 'Hover should include local state label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should resolve to local state definition');
+    });
+
+    it('should show hover for bare commit inside object-style action handler destructuring when root is omitted', async () => {
+        const provider = new VuexHoverProvider(new InheritedNamespaceHoverStoreIndexer());
+        const text = `export default { actions: { saveProfile: { handler({ commit }) { commit('SET_READY') } } } }`;
+        const char = text.indexOf('SET_READY') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/modules/account/profile.js');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should resolve for bare commit inside object-style action handler');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Mutation: SET_READY'), 'Hover should include inherited mutation label');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/account/index.js'), 'Hover should resolve to parent mutation definition');
     });
 
     it('should show hover for inherited namespace parent getter in non-namespaced child module', async () => {
