@@ -61,6 +61,8 @@
 #### ![Internal Usage](../images/internal_usage.gif)
 
 - **模块作用域**: 当在模块文件（如 `user.js`）中编写 Action 时，`commit` 和 `dispatch` 的代码补全会自动过滤并仅显示当前模块的内容。
+- **Action Context 对象写法**: 支持在 store 文件里识别 `context.state`、`context.getters`、`context.rootState`、`context.rootGetters`。
+- **对象式 Action Handler**: 支持 `actions: { someAction: { handler(ctx) {}, root: true } }` 这类 Vuex 对象式 action 写法。
 
 ### 5. 诊断 (Diagnostics)
 
@@ -70,6 +72,7 @@
 - **Commit / Dispatch**: 检查 `commit()` 和 `dispatch()` 的第一个字符串参数。
 - **Store 访问**: 校验 `$store.state/getters` 第一层点号访问和方括号访问。
 - **Store 内部引用**: 校验 store 文件中的 `state.xxx` 访问，以及 `rootState` / `rootGetters` 引用。
+- **全局 Getter 冲突**: 当根模块或非命名空间模块注册了重复的全局 getter 名时给出 Warning。
 - **注释行规避**: 对整行注释中的常见引用不报 Warning。
 
 ### 6. 重索引命令 (Reindex Command)
@@ -96,6 +99,14 @@
   store.commit("SET_NAME", value);
   store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // 根命名空间切换
+  actions: {
+    publishProfile: {
+      handler(context) {
+        return context.state.ready;
+      },
+      root: true
+    }
+  }
   ```
 - **组件方法**:
   ```javascript
@@ -122,7 +133,7 @@
 | 对象风格 commit                             | ✅   | `commit({ type: 'inc' })`                          |
 | `state` 函数形式                            | ✅   | `state: () => ({})`                                |
 | 嵌套 state                                  | ✅   | 递归解析                                           |
-| 计算属性名                                  | ✅   | `[SOME_MUTATION](state) {}`                        |
+| 计算属性名                                  | ✅   | ``[SOME_MUTATION](state) {}``                      |
 | 动态模块 import/require                     | ✅   | ES Module 和 CommonJS                              |
 | 命名空间模块                                | ✅   | 含嵌套模块                                         |
 | `this` 别名补全                             | ✅   | `const _t = this; _t.`                             |
@@ -130,6 +141,10 @@
 | State 链式路径中间词跳转                    | ✅   | 点击 `state.user.name` 中的 `user`                 |
 | Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖且未配置 `vuexHelper.storeEntry` 时静默不激活 |
 | `rootState` / `rootGetters`                 | ✅   | 完整支持补全、跳转和悬浮提示                       |
+| `context.state` / `context.getters`         | ✅   | store 文件中的补全、跳转、悬浮与诊断               |
+| 对象式 action handler                       | ✅   | `actions: { save: { handler(ctx) {}, root: true } }` |
+| 嵌套模块命名空间继承                        | ✅   | 子模块在适用时继承父命名空间下的 getter/mutation/action |
+| 全局 getter 冲突诊断                        | ✅   | root 与非 namespaced 模块的重名 getter Warning     |
 | 无效 Store 引用诊断                         | ✅   | 不存在的 state/getter/mutation/action 以 Warning 标记，含 store 文件 `state.xxx` |
 | 手动重索引命令                               | ✅   | 命令面板执行 `vuexHelper.reindex`                  |
 
@@ -149,6 +164,16 @@
   - 绝对路径: `/Users/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 1.2.0
+
+本次为功能增强版本，重点补齐更深的 Store 内部 Vuex 语义支持：
+
+- **新增**: store 内部 `context.state`、`context.getters`、`context.rootState`、`context.rootGetters` 的补全、跳转、悬浮提示与诊断支持。
+- **新增**: 嵌套模块命名空间继承，父模块开启 `namespaced: true` 时，子模块即使未显式声明也能按正确命名空间索引 getter / mutation / action。
+- **新增**: 非命名空间 getter 的全局重名冲突诊断。
+- **新增**: Vuex 对象式 action handler 支持，覆盖 `root: true`、省略 `root`、`root/handler` 字段乱序，以及 `handler(...)` 内的 store 内部能力。
+- **优化**: Host 回归测试增加真实嵌套模块与对象式 action handler 夹具，覆盖新能力在 VS Code 宿主中的行为。
 
 ### 1.1.1
 

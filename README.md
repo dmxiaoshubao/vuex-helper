@@ -63,6 +63,8 @@ Also supports code completion, jump to definition, and hover information within 
 ![Internal Usage](images/internal_usage.gif)
 
 - **Module Scope**: When writing actions in a module (e.g., `user.js`), suggestions for `commit` and `dispatch` are automatically filtered to the current module's context.
+- **Action Context Object**: Supports `context.state`, `context.getters`, `context.rootState`, and `context.rootGetters` in store files.
+- **Object-Style Handlers**: Supports Vuex object-style action handlers such as `actions: { someAction: { handler(ctx) {}, root: true } }`.
 
 ### 5. Diagnostics
 
@@ -72,6 +74,7 @@ Highlights invalid Vuex store references as warnings directly in your editor.
 - **Commit / Dispatch**: Checks first argument of `commit()` and `dispatch()` calls.
 - **Store Access**: Validates first-segment `$store.state/getters` dot access and bracket notation.
 - **Store Internal**: Validates store-file `state.xxx` access plus `rootState` / `rootGetters` references.
+- **Global Getter Conflicts**: Warns when root or non-namespaced modules register duplicate global getter names.
 - **Comment Lines**: Skips common commented-out references on full comment lines.
 
 ### 6. Reindex Command
@@ -104,6 +107,14 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
   store.commit("SET_NAME", value);
   store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // Root namespace switch
+  actions: {
+    publishProfile: {
+      handler(context) {
+        return context.state.ready;
+      },
+      root: true
+    }
+  }
   ```
 - **Component Methods**:
   ```javascript
@@ -130,7 +141,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | Object-style commit                         | ✅     | `commit({ type: 'inc' })`                          |
 | `state` as function                         | ✅     | `state: () => ({})`                                |
 | Nested state                                | ✅     | Recursive parsing                                  |
-| Computed property keys                      | ✅     | `[SOME_MUTATION](state) {}`                        |
+| Computed property keys                      | ✅     | ``[SOME_MUTATION](state) {}``                      |
 | Dynamic module import/require               | ✅     | ES Module & CommonJS                               |
 | Namespaced modules                          | ✅     | Including nested                                   |
 | `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
@@ -138,10 +149,24 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
 | Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency and `vuexHelper.storeEntry` is unset |
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
+| `context.state` / `context.getters`         | ✅     | Store-file completion, definition, hover, and diagnostics |
+| Object-style action handlers                | ✅     | `actions: { save: { handler(ctx) {}, root: true } }` |
+| Inherited nested module namespace assets    | ✅     | Child getter / mutation / action inherit parent namespace when applicable |
+| Duplicate global getter conflict diagnostics | ✅    | Warns on root and non-namespaced getter name collisions |
 | Diagnostics for invalid store references    | ✅     | Warning on non-existent state/getter/mutation/action, including store-file `state.xxx` |
 | Manual reindex command                      | ✅     | `vuexHelper.reindex` via Command Palette           |
 
 ## Release Notes
+
+### 1.2.0
+
+Feature-focused release centered on deeper store-internal Vuex awareness:
+
+- **Added**: Store-internal `context.state`, `context.getters`, `context.rootState`, and `context.rootGetters` support across completion, definition, hover, and diagnostics.
+- **Added**: Nested module namespace inheritance so child module getters / mutations / actions follow a namespaced parent even when the child omits `namespaced: true`.
+- **Added**: Duplicate global getter conflict diagnostics for root and non-namespaced modules.
+- **Added**: Vuex object-style action handler support, including `root: true`, omitted `root`, reordered `root` / `handler`, and store-internal provider support inside `handler(...)`.
+- **Improved**: Host regression coverage now exercises the new nested-module and object-style action handler paths with real fixtures.
 
 ### 1.1.1
 

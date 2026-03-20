@@ -2,6 +2,19 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.2.0] - 2026-03-20
+
+### Added
+
+- **Action context member access**: Added store-internal completion / definition / hover / diagnostics support for `context.state`, `context.getters`, `context.rootState`, and `context.rootGetters`, not just destructured Vuex callback params.
+- **Inherited module namespaces**: Added nested-module asset namespace inheritance so child modules under a namespaced parent are indexed with the correct getter / mutation / action namespace even when the child omits `namespaced: true`.
+- **Duplicate global getter diagnostics**: Added warnings for duplicate getter names registered into the global namespace by root or non-namespaced modules.
+- **Object-style action handlers**: Added support for Vuex object-style action descriptors such as `{ handler(ctx) {}, root: true }`, including root registration and store-internal completion / definition / hover / diagnostics inside `handler(...)`.
+
+### Improved
+
+- **Host regression coverage**: Expanded isolated host coverage with real nested-module and object-style action handler fixtures to verify inherited namespaces, action-context access, object-style handlers, and duplicate-global-getter diagnostics under the VS Code host.
+
 ## [1.1.1] - 2026-03-18
 
 ### Fixed
