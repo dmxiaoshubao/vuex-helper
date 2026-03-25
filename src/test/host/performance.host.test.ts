@@ -280,6 +280,33 @@ async function withTemporaryTokenPrefix<T>(
     }
 }
 
+async function withTemporaryReplacement<T>(
+    document: vscode.TextDocument,
+    anchor: string,
+    token: string,
+    replacement: string,
+    run: (editedDocument: vscode.TextDocument, position: vscode.Position) => Promise<T>,
+    occurrence = 1,
+): Promise<T> {
+    const editor = await vscode.window.showTextDocument(document);
+    const start = findPositionInAnchor(document, anchor, token, occurrence);
+    const originalEnd = new vscode.Position(start.line, start.character + token.length);
+    const editedEnd = new vscode.Position(start.line, start.character + replacement.length);
+
+    const applied = await editor.edit((editBuilder) => {
+        editBuilder.replace(new vscode.Range(start, originalEnd), replacement);
+    });
+    assert.ok(applied, `Failed to apply temporary replacement for "${token}"`);
+
+    try {
+        return await run(editor.document, editedEnd);
+    } finally {
+        await editor.edit((editBuilder) => {
+            editBuilder.replace(new vscode.Range(start, editedEnd), token);
+        });
+    }
+}
+
 function p95(values: number[]): number {
     const sorted = values.slice().sort((a, b) => a - b);
     const idx = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
@@ -429,6 +456,7 @@ describe('Host Diagnostics', function () {
         const cleanChecks = [
             findPositionInAnchor(document, '...mapState("user", ["name", "age"]),', 'name', 1, 2),
             findPositionInAnchor(document, '...mapState("user", ["name", "age"]),', 'age', 1, 2),
+            findPositionInAnchor(document, '...mapGetters("user", ["upperName", "hasRole", "displayName"]),', 'displayName', 1, 2),
             findPositionInAnchor(document, 'return state.count > 0 ? "dark" : "light";', 'dark', 1, 2),
             findPositionInAnchor(document, 'return state.count > 0 ? "dark" : "light";', 'light', 1, 2),
             findPositionInAnchor(document, 'dispatch("local-event");', 'local-event', 1, 2),
@@ -538,6 +566,82 @@ describe('Host Diagnostics', function () {
             hasWarningAtPosition(profileDiagnostics, missingGetterPosition, 'missingInheritedGetter'),
             'Expected warning for invalid inherited namespace getter access',
         );
+    });
+
+    it('should keep deep member access clean while still reporting first-level invalid refs in real store files', async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        assert.ok(workspaceFolders && workspaceFolders.length > 0, 'Workspace is required');
+        const workspaceRoot = workspaceFolders![0].uri.fsPath;
+        const warmupFile = path.join(workspaceRoot, 'src/main.js');
+        const rootStoreFile = path.join(workspaceRoot, 'src/store/index.js');
+        const userFile = path.join(workspaceRoot, 'src/store/modules/user.js');
+
+        await openDocumentForProviders(warmupFile);
+        await ensureExtensionActivated();
+        await vscode.commands.executeCommand('vuexHelper.reindex');
+        await sleep(1000);
+
+        const rootDocument = await openDocumentForProviders(rootStoreFile);
+        const rootWarningPosition = findPositionInAnchor(
+            rootDocument,
+            'state.othersss = 1;',
+            'othersss',
+            1,
+            2,
+        );
+        const rootCleanPosition = findPositionInAnchor(
+            rootDocument,
+            'state.items.push(item);',
+            'push',
+            1,
+            2,
+        );
+        const rootDiagnostics = await waitForDiagnostics(rootDocument, (items) =>
+            hasWarningAtPosition(items, rootWarningPosition, 'othersss') &&
+            !hasAnyDiagnosticAtPosition(items, rootCleanPosition)
+        );
+        assert.ok(hasWarningAtPosition(rootDiagnostics, rootWarningPosition, 'othersss'), 'Expected first-level invalid state warning in root store');
+        assert.ok(!hasAnyDiagnosticAtPosition(rootDiagnostics, rootCleanPosition), 'Deep root state member access should stay clean');
+
+        const userDocument = await openDocumentForProviders(userFile);
+        const userWarningPosition = findPositionInAnchor(
+            userDocument,
+            'getters.isAdmin2;',
+            'isAdmin2',
+            1,
+            1,
+        );
+        const deepStatePosition = findPositionInAnchor(
+            userDocument,
+            'upperName: (state) => state.name.toUpperCase(),',
+            'toUpperCase',
+            1,
+            2,
+        );
+        const deepGetterPosition = findPositionInAnchor(
+            userDocument,
+            'getters.displayName.length; // <- 深层成员不应触发诊断',
+            'length',
+            1,
+            2,
+        );
+        const optionalChainPosition = findPositionInAnchor(
+            userDocument,
+            'return state?.roles?.length;',
+            'length',
+            1,
+            2,
+        );
+        const userDiagnostics = await waitForDiagnostics(userDocument, (items) =>
+            hasWarningAtPosition(items, userWarningPosition, 'isAdmin2') &&
+            !hasAnyDiagnosticAtPosition(items, deepStatePosition) &&
+            !hasAnyDiagnosticAtPosition(items, deepGetterPosition) &&
+            !hasAnyDiagnosticAtPosition(items, optionalChainPosition)
+        );
+        assert.ok(hasWarningAtPosition(userDiagnostics, userWarningPosition, 'isAdmin2'), 'Expected known first-level invalid getter warning in user module');
+        assert.ok(!hasAnyDiagnosticAtPosition(userDiagnostics, deepStatePosition), 'Deep state member access should stay clean');
+        assert.ok(!hasAnyDiagnosticAtPosition(userDiagnostics, deepGetterPosition), 'Deep getters member access should stay clean');
+        assert.ok(!hasAnyDiagnosticAtPosition(userDiagnostics, optionalChainPosition), 'Optional-chain deep state access should stay clean');
     });
 });
 
@@ -760,6 +864,23 @@ describe('Host Completion', function () {
             hovers.some((hover) => hoverToString(hover).includes('others/SET_THEME'))
         );
         assert.ok(mappedHovers.some((hover) => hoverToString(hover).includes('others/SET_THEME')), 'Expected mapped bracket hover to include others/SET_THEME');
+
+        const objectValueItems = await withTemporaryReplacement(
+            document,
+            'myIncrement: "increment", // <- 光标放引号内',
+            '"increment"',
+            '',
+            async (editedDocument, position) => waitForCompletionItems(editedDocument, position, (items) => {
+                const labels = items.map(getCompletionLabel);
+                return labels.includes('increment');
+            }),
+        );
+        const incrementItem = objectValueItems.find((item) => getCompletionLabel(item) === 'increment');
+        assert.ok(incrementItem, 'Expected object value completion to include increment');
+        const incrementInsertText = typeof incrementItem.insertText === 'string'
+            ? incrementItem.insertText
+            : incrementItem.insertText?.value;
+        assert.strictEqual(incrementInsertText, "'increment'", 'Object value completion should only insert the value string');
     });
 
     it('should support context members and object-style root actions in real namespaced module files', async () => {

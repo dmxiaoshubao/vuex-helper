@@ -192,7 +192,9 @@ export class StoreParser {
         let exportDefaultCandidate: t.Node | null = null;
         let moduleExportsCandidate: t.Node | null = null;
         let newExpressionCandidate: t.Node | null = null;
-        const isTopLevelDeclaration = (path: NodePath<any>) => path.parentPath?.isProgram() === true;
+        const isTopLevelDeclaration = (path: NodePath<any>) =>
+            path.parentPath?.isProgram() === true
+            || (path.parentPath?.isExportNamedDeclaration() === true && path.parentPath.parentPath?.isProgram() === true);
 
         traverse(ast, {
             ImportDeclaration: (path: NodePath<t.ImportDeclaration>) => {
@@ -210,7 +212,11 @@ export class StoreParser {
                 }
             },
             VariableDeclarator: (path: NodePath<t.VariableDeclarator>) => {
-                if (!path.parentPath?.parentPath?.isProgram()) return;
+                const declarationPath = path.parentPath?.parentPath;
+                const isTopLevelVariable =
+                    declarationPath?.isProgram() === true
+                    || (declarationPath?.isExportNamedDeclaration() === true && declarationPath.parentPath?.isProgram() === true);
+                if (!isTopLevelVariable) return;
                 if (path.node.id.type === 'Identifier') {
                     localVars[path.node.id.name] = path.node.init;
                 }

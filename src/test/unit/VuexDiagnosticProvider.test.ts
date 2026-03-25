@@ -482,6 +482,22 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         assert.ok(diags.some(d => d.message.includes('noSuchField')), 'Expected warning for noSuchField');
     });
 
+    it('should not warn for deep internal state member chain', () => {
+        const doc = createDocument(`const mutations = {
+  addItem(state, item) { state.items.push(item); }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected: ${diags.map(d => d.message).join(', ')}`);
+    });
+
+    it('should not warn for optional-chain internal state member chain', () => {
+        const doc = createDocument(`const actions = {
+  save({ state }) { return state?.profile?.name; }
+}`, '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected: ${diags.map(d => d.message).join(', ')}`);
+    });
+
     it('should not warn for valid internal state access in root store file', () => {
         const doc = createDocument(`export default {
   mutations: {
@@ -615,6 +631,14 @@ dispatch('local-event');`, '/mock/workspace/src/App.js');
         const diags = provider.diagnose(doc);
         assert.ok(diags.length > 0, 'Should warn for invalid getters access');
         assert.ok(diags[0].message.includes('nonExistent'));
+    });
+
+    it('should not warn for deep internal getters member chain', () => {
+        const doc = createDocument(
+            `const g = (state, getters) => getters.cartTotal.length`,
+            '/mock/workspace/store/modules/cart.js');
+        const diags = provider.diagnose(doc);
+        assert.strictEqual(diags.length, 0, `Unexpected diagnostics: ${diags.map(d => d.message).join(', ')}`);
     });
 
     it('should not scan internal getters in non-store files', () => {

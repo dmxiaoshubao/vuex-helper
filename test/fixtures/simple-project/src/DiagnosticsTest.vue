@@ -4,7 +4,6 @@
 
 <script>
 import { mapState, mapGetters, mapMutations, mapActions } from "vuex";
-
 /**
  * DiagnosticsTest.vue
  * 专门用于排查 VuexDiagnosticProvider 的测试文件。
@@ -38,7 +37,7 @@ export default {
     // [OK]  根模块有效 getter
     ...mapGetters(["isLoggedIn", "getItemById"]),
     // [OK]  命名空间有效 getter
-    ...mapGetters("user", ["upperName", "hasRole"]),
+    ...mapGetters("user", ["upperName", "hasRole", "displayName"]),
     // [WARN] 根模块不存在的 getter
     ...mapGetters(["noSuchGetter"]),
     // [WARN] 命名空间不存在的 getter
@@ -98,7 +97,7 @@ export default {
     // [WARN] 根模块不存在的 mutation
     ...mapMutations(["NO_SUCH_MUTATION"]),
     // [WARN] 命名空间不存在的 mutation
-    ...mapMutations("user", ["ADD_ROLE", "BAD_MUTATION"]),
+    ...mapMutations("user", ["ADD_ROLE", "BAD_MUTATION", SETDISPA]),
     ...mapMutations("others", ["BAD_MUTATION2", "BAD_MUTATION3"]),
 
     // ---- 15.4 mapActions ----

@@ -1362,8 +1362,8 @@ export default {
             assert.ok(infoItem, 'Should find mapped state "info" from user namespace');
         });
 
-        it('should provide completion with object syntax mapHelper', async () => {
-            const text = `<script>
+    it('should provide completion with object syntax mapHelper', async () => {
+        const text = `<script>
 import { mapState } from 'vuex';
 export default {
   computed: {
@@ -1385,6 +1385,28 @@ export default {
             // 应该用别名 myCount，而不是原始名 count
             const myCountItem = items.find((i: any) => i.label === 'myCount');
             assert.ok(myCountItem, 'Should find mapped state with alias "myCount"');
+        });
+
+        it('should only insert object value when key and colon already exist in mapMutations object syntax', async () => {
+            const scopedProvider = new VuexCompletionItemProvider(new ScopedMockStoreIndexer());
+            const text = `<script>
+import { mapMutations } from 'vuex';
+export default {
+  methods: {
+    ...mapMutations('others', { SET_NAME:  })
+  }
+}
+</script>`;
+            const position = { line: 4, character: 42 } as any;
+            const document = createVueDocument(text);
+
+            const result = await scopedProvider.provideCompletionItems(document, position, {} as any, {} as any);
+            const items = getItems(result);
+
+            assert.ok(items && items.length > 0, 'Should provide completion items for object value position');
+            const setNameItem = items.find((i: any) => i.label === 'SET_NAME');
+            assert.ok(setNameItem, 'Should find namespaced mutation item');
+            assert.strictEqual(setNameItem.insertText, "'SET_NAME'");
         });
 
         it('should not provide this. completion inside mapHelper context', async () => {

@@ -158,6 +158,15 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 
 ## Release Notes
 
+### 1.2.1
+
+Patch release focused on diagnostics and completion correctness:
+
+- **Fixed**: Diagnostics now only warn on first-level store references, avoiding false positives on deep member access such as `state.items.push(...)`, `state.name.toUpperCase()`, and optional-chain deep access.
+- **Fixed**: Store parsing now resolves exported-const computed keys more reliably, so aliases like `export const KEY = 'name'` can be indexed correctly in real Vuex modules.
+- **Fixed**: Object-syntax helper completion no longer duplicates the left-side key when completing after `alias:`, so choosing a suggestion inserts only the value string.
+- **Improved**: Added unit and host regression coverage for deep-access diagnostics, computed-key indexing, and object-value completion behavior.
+
 ### 1.2.0
 
 Feature-focused release centered on deeper store-internal Vuex awareness:

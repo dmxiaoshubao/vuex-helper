@@ -6,6 +6,10 @@ const state = {
   productName: "MyApp",
   /** 产品版本 */
   version: "1.0.0",
+  testObj: {
+    a: 1,
+    ahaha: 2,
+  },
   /**
    * 主题设置
    * @type {'light' | 'dark' | 'auto'}

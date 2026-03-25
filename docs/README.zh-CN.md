@@ -165,6 +165,15 @@
 
 ## 更新日志
 
+### 1.2.1
+
+本次为补丁修复版本，重点收敛诊断与对象语法补全行为：
+
+- **修复**: diagnostics 现在只对第一层 Store 引用给出 Warning，像 `state.items.push(...)`、`state.name.toUpperCase()`、可选链深层访问这类场景不再误报。
+- **修复**: Store 解析补齐了 `export const KEY = 'name'` 这类计算属性 key 的索引能力，真实 Vuex 模块里的 computed key getter / mutation / action 识别更稳定。
+- **修复**: `mapMutations` / `mapActions` / `mapGetters` / `mapState` 对象语法下，在 `alias:` 后触发补全时不再重复插入左侧 key，只会补全 value 字符串。
+- **优化**: 补充 unit 与 host 回归测试，覆盖深层访问误报、computed key 索引、对象 value 补全三类问题。
+
 ### 1.2.0
 
 本次为功能增强版本，重点补齐更深的 Store 内部 Vuex 语义支持：

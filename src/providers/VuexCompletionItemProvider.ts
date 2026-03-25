@@ -227,6 +227,8 @@ export class VuexCompletionItemProvider
         .substring(0, prefix.length - currentWordLength)
         .trimEnd();
       const lastChar = effectivePrefix.charAt(effectivePrefix.length - 1);
+      const isObjectValueContext =
+        scopedVuexContext.isObject && this.isMapHelperObjectValueContext(effectivePrefix);
 
       const isInsideQuote = ["'", '"', "`"].includes(lastChar);
 
@@ -400,9 +402,14 @@ export class VuexCompletionItemProvider
           // 不在引号内，添加引号
           completionItem.range = replacementRange;
           if (scopedVuexContext.isObject) {
-            const alias = item.name;
-            completionItem.insertText = `${alias}: '${label}'`;
-            completionItem.filterText = `${alias}: '${label}'`;
+            if (isObjectValueContext) {
+              completionItem.insertText = `'${label}'`;
+              completionItem.filterText = `'${label}'`;
+            } else {
+              const alias = item.name;
+              completionItem.insertText = `${alias}: '${label}'`;
+              completionItem.filterText = `${alias}: '${label}'`;
+            }
           } else {
             completionItem.insertText = `'${label}'`;
             completionItem.filterText = `'${label}'`;
@@ -1375,6 +1382,13 @@ export class VuexCompletionItemProvider
     const closingIndex = textAfterCursor.indexOf(closingPattern, i);
     const hasClosing = closingIndex !== -1;
     return { spacesCount, hasClosing, closingIndex };
+  }
+
+  /** mapHelper 对象语法中，当前项若已写出 `key:`，补全只应插入 value。 */
+  private isMapHelperObjectValueContext(prefix: string): boolean {
+    const lastBoundary = Math.max(prefix.lastIndexOf("{"), prefix.lastIndexOf(","));
+    const currentEntry = lastBoundary >= 0 ? prefix.slice(lastBoundary + 1) : prefix;
+    return currentEntry.includes(":");
   }
 
   /** 拼接 store item 的完整路径 */

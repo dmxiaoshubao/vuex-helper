@@ -57,7 +57,7 @@ describe('Vuex Store Analysis', () => {
             .filter((item) => item.modulePath.join('/') === 'user')
             .map((item) => item.name)
             .sort();
-        assert.deepStrictEqual(userGetters, ['hasRole', 'isAdmin', 'nameWithCount', 'upperName', 'userAge']);
+        assert.deepStrictEqual(userGetters, ['displayName', 'hasRole', 'isAdmin', 'nameWithCount', 'upperName', 'userAge']);
 
         const userMutations = storeMap!.mutations
             .filter((item) => item.modulePath.join('/') === 'user')
@@ -69,13 +69,21 @@ describe('Vuex Store Analysis', () => {
             .filter((item) => item.modulePath.join('/') === 'user')
             .map((item) => item.name)
             .sort();
-        assert.deepStrictEqual(userActions, ['accessRootState', 'addItem', 'callRootAction', 'fetchProfile', 'inspectShadowedLocals', 'logout', 'updateInfoAsync', 'updateName']);
+        assert.deepStrictEqual(userActions, ['accessRootState', 'addItem', 'callRootAction', 'fetchProfile', 'inspectOptionalChain', 'inspectShadowedLocals', 'logout', 'updateInfoAsync', 'updateName']);
 
         assert.ok(!storeMap!.state.some((item) => item.name === 'tmp' && item.modulePath.join('/') === 'user'));
         assert.ok(!storeMap!.getters.some((item) => item.name === 'tempGetter' && item.modulePath.join('/') === 'user'));
         assert.ok(!storeMap!.mutations.some((item) => item.name === 'TEMP_MUTATION' && item.modulePath.join('/') === 'user'));
         assert.ok(!storeMap!.actions.some((item) => item.name === 'tempAction' && item.modulePath.join('/') === 'user'));
         assert.ok(indexer.getNamespace(path.join(fixtureRoot, 'src/store/modules/user.js'))?.join('/') === 'user');
+    });
+
+    it('should index exported-const computed getter keys from simple-project', async () => {
+        const indexer = new StoreIndexer(fixtureRoot);
+        await indexer.index();
+
+        const displayNameGetter = indexer.getIndexedItem('getter', 'displayName', 'user');
+        assert.ok(displayNameGetter, 'Should resolve getter key defined by exported const');
     });
 
 });

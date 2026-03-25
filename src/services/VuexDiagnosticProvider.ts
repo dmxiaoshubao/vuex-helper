@@ -603,6 +603,7 @@ export class VuexDiagnosticProvider {
             const directKeyword = objectChain[0];
             if (
                 (directKeyword === 'state' || directKeyword === 'getters') &&
+                objectChain.length === 1 &&
                 isLikelyVuexSpecialParamBinding(
                     binding,
                     directKeyword,
@@ -612,13 +613,13 @@ export class VuexDiagnosticProvider {
             ) {
                 const targetNamespace = directKeyword === 'state' ? currentNamespace : currentAssetNamespace;
                 if (targetNamespace === undefined) return;
-                const accessPath = [...objectChain.slice(1), node.property.name].join('.');
-                pushRef(accessPath, directKeyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
+                pushRef(node.property.name, directKeyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
                 return;
             }
 
             if (
                 (directKeyword === 'rootState' || directKeyword === 'rootGetters') &&
+                objectChain.length === 1 &&
                 isLikelyVuexSpecialParamBinding(
                     binding,
                     directKeyword,
@@ -626,8 +627,7 @@ export class VuexDiagnosticProvider {
                     allowLooseStoreFileFallback,
                 )
             ) {
-                const accessPath = [...objectChain.slice(1), node.property.name].join('.');
-                pushRef(accessPath, directKeyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
+                pushRef(node.property.name, directKeyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
                 return;
             }
 
@@ -636,21 +636,21 @@ export class VuexDiagnosticProvider {
             const keyword = objectChain[1];
             if (
                 (keyword === 'state' || keyword === 'getters') &&
+                objectChain.length === 2 &&
                 isLikelyVuexContextBinding(binding, storeScopeNamespace, allowLooseStoreFileFallback)
             ) {
                 const targetNamespace = keyword === 'state' ? currentNamespace : currentAssetNamespace;
                 if (targetNamespace === undefined) return;
-                const accessPath = [...objectChain.slice(2), node.property.name].join('.');
-                pushRef(accessPath, keyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
+                pushRef(node.property.name, keyword === 'state' ? 'state' : 'getter', node.property, true, targetNamespace);
                 return;
             }
 
             if (
                 (keyword === 'rootState' || keyword === 'rootGetters') &&
+                objectChain.length === 2 &&
                 isLikelyVuexContextBinding(binding, storeScopeNamespace, allowLooseStoreFileFallback)
             ) {
-                const accessPath = [...objectChain.slice(2), node.property.name].join('.');
-                pushRef(accessPath, keyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
+                pushRef(node.property.name, keyword === 'rootState' ? 'state' : 'getter', node.property, false, undefined);
             }
         };
 

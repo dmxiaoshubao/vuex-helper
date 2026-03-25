@@ -2,6 +2,18 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.2.1] - 2026-03-25
+
+### Fixed
+
+- **First-level diagnostics only**: Limited diagnostics to first-level store references so deep member access like `state.items.push(...)`, `state.name.toUpperCase()`, and optional-chain deep access no longer produce false positives.
+- **Computed key indexing**: Fixed store parsing for exported-const computed keys so Vuex assets declared via `export const KEY = 'name'` are indexed reliably in real modules.
+- **Object helper value completion**: Fixed object-syntax `mapState` / `mapGetters` / `mapMutations` / `mapActions` completion so selecting a suggestion after `alias:` inserts only the value string instead of duplicating the key.
+
+### Improved
+
+- **Regression coverage**: Added unit and host regression coverage for deep-access diagnostics, computed-key indexing, and object-value completion behavior.
+
 ## [1.2.0] - 2026-03-20
 
 ### Added

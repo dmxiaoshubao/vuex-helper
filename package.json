@@ -3,7 +3,7 @@
   "publisher": "dmxiaoshubao",
   "displayName": "Vuex Helper",
   "description": "Vuex definition, completion, hover, diagnostics, and reindex support for Vue 2.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "icon": "images/icon.png",
   "license": "MIT",
   "repository": {

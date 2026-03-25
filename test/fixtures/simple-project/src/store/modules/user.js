@@ -1,3 +1,6 @@
+export const DISPLAY_NAME = "displayName";
+export const SET_DISPLAY_NAME = 'setDisplayName'
+
 const state = {
   /** 你好呀 */
   name: "John Doe",
@@ -40,10 +43,14 @@ const mutations = {
   /**
    * Set user profile
    */
+  
   SET_PROFILE(state, profile) {
     state.name = profile.name;
     state.age = profile.age;
   },
+  [SET_DISPLAY_NAME](state, value) {
+    state.name = value
+  }
 };
 
 const actions = {
@@ -156,11 +163,18 @@ const actions = {
   async callRootAction({ dispatch }) {
     dispatch("");
   },
+  /**
+   * [DIAG.user.3] 深层可选链只看第一层，后续成员不诊断
+   */
+  inspectOptionalChain({ state }) {
+    return state?.roles?.length;
+  },
 };
 
 const getters = {
   /** 获取大写名称 */
   upperName: (state) => state.name.toUpperCase(),
+  [DISPLAY_NAME]: (state) => state.name.toUpperCase(),
   // Get user age
   userAge: (state) => state.age,
   /**
@@ -196,6 +210,7 @@ const getters = {
 
     // getters. 补全 — 应显示本模块的 getter
     getters.upperName; // <- 光标放点后
+    getters.displayName.length; // <- 深层成员不应触发诊断
 
     return `${state.name} (${rootState.others.language})`;
   },
