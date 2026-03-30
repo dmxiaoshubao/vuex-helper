@@ -12,16 +12,22 @@ export interface EntryAnalyzeOptions {
     forceRefresh?: boolean;
 }
 
+export interface EntryAnalyzerHooks {
+    onWillUpdateStoreEntryConfig?: () => void;
+}
+
 export class EntryAnalyzer {
     private workspaceRoot: string;
     private pathResolver: PathResolver;
+    private hooks: EntryAnalyzerHooks;
     private promptedForMissingStore = false;
     private warnedInvalidConfiguredEntry = new Set<string>();
     private cachedStorePath: string | null | undefined;
 
-    constructor(workspaceRoot: string) {
+    constructor(workspaceRoot: string, hooks: EntryAnalyzerHooks = {}) {
         this.workspaceRoot = workspaceRoot;
         this.pathResolver = new PathResolver(workspaceRoot);
+        this.hooks = hooks;
     }
 
     /**
@@ -30,6 +36,7 @@ export class EntryAnalyzer {
     public async analyze(options: EntryAnalyzeOptions = {}): Promise<string | null> {
         const interactive = options.interactive === true;
         const forceRefresh = options.forceRefresh === true;
+        const targetUri = vscode.Uri.file(this.workspaceRoot);
 
         if (!forceRefresh && this.cachedStorePath !== undefined) {
             if (!this.cachedStorePath) return null;
@@ -39,7 +46,7 @@ export class EntryAnalyzer {
             this.cachedStorePath = undefined;
         }
         // 0. Check for configuration "vuexHelper.storeEntry"
-        const config = vscode.workspace.getConfiguration('vuexHelper');
+        const config = vscode.workspace.getConfiguration('vuexHelper', targetUri);
         const configuredEntry = config.get<string>('storeEntry');
 
         if (configuredEntry && configuredEntry.trim() !== '') {
@@ -70,6 +77,7 @@ export class EntryAnalyzer {
             }
 
             if (resolvedPath && await this.isAllowedStorePath(resolvedPath)) {
+                this.promptedForMissingStore = false;
                 this.cachedStorePath = resolvedPath;
                 return resolvedPath;
             } else {
@@ -90,6 +98,7 @@ export class EntryAnalyzer {
         for (const file of entryFiles) {
             const storePath = await this.findStoreInjection(file);
             if (storePath) {
+                this.promptedForMissingStore = false;
                 this.cachedStorePath = storePath;
                 return storePath;
             }
@@ -104,27 +113,39 @@ export class EntryAnalyzer {
         this.promptedForMissingStore = true;
 
         const action = await vscode.window.showInformationMessage(
-            'Vuex Helper: Could not find Vuex store entry automatically.', 
-            'Configure Path'
+            'Vuex Helper: Could not find Vuex store entry automatically.',
+            'Select Store File'
         );
-        if (action === 'Configure Path') {
-            const input = await vscode.window.showInputBox({
-                prompt: 'Enter the path to your Vuex store (e.g., src/store/index.js or @/store/index.js)',
-                placeHolder: 'src/store/index.js'
+        if (action === 'Select Store File') {
+            const selection = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                defaultUri: vscode.Uri.file(path.join(this.workspaceRoot, 'src')),
+                openLabel: 'Select Vuex Store Entry',
+                filters: {
+                    'JavaScript / TypeScript': ['js', 'ts'],
+                    'All Files': ['*']
+                }
             });
-            
-            if (input && input.trim()) {
+
+            const selected = selection?.[0];
+            if (selected?.fsPath) {
                 try {
-                    // Update configuration for the specific workspace folder
-                    const targetUri = vscode.Uri.file(this.workspaceRoot);
-                    const config = vscode.workspace.getConfiguration('vuexHelper', targetUri);
-                    
-                    // Force update to WorkspaceFolder level
-                    await config.update('storeEntry', input, vscode.ConfigurationTarget.WorkspaceFolder);
-                    
-                    vscode.window.showInformationMessage(`Vuex Helper: Store path configured to "${input}".`);
+                    if (!await this.isAllowedStorePath(selected.fsPath)) {
+                        void vscode.window.showWarningMessage('Vuex Helper: Please select a store file inside the current workspace.');
+                    } else {
+                        const configPath = await this.pathResolver.toPreferredConfigPath(selected.fsPath);
+                        this.hooks.onWillUpdateStoreEntryConfig?.();
+                        await config.update('storeEntry', configPath, vscode.ConfigurationTarget.WorkspaceFolder);
+                        this.resetInteractionState();
+                        this.promptedForMissingStore = false;
+                        this.cachedStorePath = selected.fsPath;
+                        void vscode.window.showInformationMessage(`Vuex Helper: Store path configured to "${configPath}".`);
+                        return selected.fsPath;
+                    }
                 } catch (e) {
-                    vscode.window.showErrorMessage(`Vuex Helper: Failed to save setting. ${e}`);
+                    void vscode.window.showErrorMessage(`Vuex Helper: Failed to save setting. ${e}`);
                 }
             }
         }
@@ -134,6 +155,12 @@ export class EntryAnalyzer {
     }
 
     public invalidateCache(): void {
+        this.cachedStorePath = undefined;
+    }
+
+    public resetInteractionState(): void {
+        this.promptedForMissingStore = false;
+        this.warnedInvalidConfiguredEntry.clear();
         this.cachedStorePath = undefined;
     }
 

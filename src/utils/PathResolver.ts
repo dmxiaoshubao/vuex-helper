@@ -76,6 +76,23 @@ export class PathResolver {
         return result;
     }
 
+    /**
+     * 将工作区内绝对路径转换成适合写入配置的路径。
+     * 优先使用 ts/jsconfig 中可回解析的别名，否则退回到工作区相对路径。
+     */
+    public async toPreferredConfigPath(filePath: string): Promise<string> {
+        await this.ensureInitialized();
+
+        const normalizedFilePath = await this.normalizeRealPath(filePath);
+        const aliasPath = await this.findAliasPathForFile(normalizedFilePath);
+        if (aliasPath) {
+            return aliasPath;
+        }
+
+        const relativePath = path.relative(this.resolvedWorkspaceRoot, normalizedFilePath);
+        return this.normalizeConfigPath(relativePath);
+    }
+
     private async resolveUncached(importPath: string, currentFilePath: string): Promise<string | null> {
         if (importPath.startsWith('.')) {
             // Relative path
@@ -120,6 +137,49 @@ export class PathResolver {
         return null;
     }
 
+    private async findAliasPathForFile(filePath: string): Promise<string | null> {
+        const dummyContext = path.join(this.workspaceRoot, 'package.json');
+
+        for (const alias in this.aliasMap) {
+            const isWildcardAlias = alias.endsWith('/*');
+            const aliasPrefix = alias.replace('/*', '');
+            const targets = this.aliasMap[alias] || [];
+
+            for (const target of targets) {
+                const targetPrefix = target.replace('/*', '');
+                const targetBasePath = path.resolve(this.workspaceRoot, targetPrefix);
+                const normalizedTargetBase = await this.normalizePath(targetBasePath);
+
+                if (isWildcardAlias) {
+                    const relative = path.relative(normalizedTargetBase, filePath);
+                    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                        continue;
+                    }
+
+                    const candidate = relative
+                        ? `${aliasPrefix}/${this.normalizeConfigPath(relative)}`
+                        : aliasPrefix;
+                    const resolvedCandidate = await this.resolve(candidate, dummyContext);
+                    if (resolvedCandidate && await this.normalizeRealPath(resolvedCandidate) === filePath) {
+                        return candidate;
+                    }
+                    continue;
+                }
+
+                if (normalizedTargetBase !== filePath) {
+                    continue;
+                }
+
+                const resolvedCandidate = await this.resolve(aliasPrefix, dummyContext);
+                if (resolvedCandidate && await this.normalizeRealPath(resolvedCandidate) === filePath) {
+                    return aliasPrefix;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private async tryExtensions(filePath: string): Promise<string | null> {
         const extensions = ['.ts', '.js', '.vue', '.json', '/index.ts', '/index.js', '/index.vue'];
 
@@ -153,12 +213,7 @@ export class PathResolver {
 
         // 使用已缓存的 resolvedWorkspaceRoot，避免重复 realpath 调用
         const workspaceRoot = this.resolvedWorkspaceRoot;
-        let resolvedPath: string;
-        try {
-            resolvedPath = await fs.promises.realpath(candidate);
-        } catch {
-            resolvedPath = path.resolve(candidate);
-        }
+        const resolvedPath = await this.normalizeRealPath(candidate);
 
         const relative = path.relative(workspaceRoot, resolvedPath);
         const isInsideWorkspace = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
@@ -167,5 +222,25 @@ export class PathResolver {
             return resolvedPath;
         }
         return null;
+    }
+
+    private async normalizeRealPath(candidate: string): Promise<string> {
+        try {
+            return await fs.promises.realpath(candidate);
+        } catch {
+            return path.resolve(candidate);
+        }
+    }
+
+    private async normalizePath(candidate: string): Promise<string> {
+        try {
+            return await fs.promises.realpath(candidate);
+        } catch {
+            return path.resolve(candidate);
+        }
+    }
+
+    private normalizeConfigPath(candidate: string): string {
+        return candidate.split(path.sep).join('/');
     }
 }

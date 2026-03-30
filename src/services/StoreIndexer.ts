@@ -35,10 +35,15 @@ export class StoreIndexer {
     private moduleDefinitionIndex: Map<string, vscode.Location> = new Map();
     private moduleNames: Set<string> = new Set();
     private duplicateGlobalGetterConflicts: VuexGlobalGetterConflict[] = [];
+    private internalStoreEntryConfigChangeCount = 0;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
-        this.entryAnalyzer = new EntryAnalyzer(workspaceRoot);
+        this.entryAnalyzer = new EntryAnalyzer(workspaceRoot, {
+            onWillUpdateStoreEntryConfig: () => {
+                this.internalStoreEntryConfigChangeCount++;
+            }
+        });
         this.storeParser = new StoreParser(workspaceRoot);
     }
 
@@ -174,6 +179,18 @@ export class StoreIndexer {
 
     public getStoreEntryPath(): string | null {
         return this.lastStoreEntryPath;
+    }
+
+    public resetEntryInteractionState(): void {
+        this.entryAnalyzer.resetInteractionState();
+    }
+
+    public consumeInternalStoreEntryConfigChange(): boolean {
+        if (this.internalStoreEntryConfigChangeCount <= 0) {
+            return false;
+        }
+        this.internalStoreEntryConfigChangeCount--;
+        return true;
     }
 
     private clearIndexes(): void {

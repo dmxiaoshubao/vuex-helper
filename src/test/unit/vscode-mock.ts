@@ -91,6 +91,10 @@ export const ConfigurationTarget = {
     WorkspaceFolder: 3
 };
 
+export const ProgressLocation = {
+    Notification: 15
+};
+
 export class Diagnostic {
     source?: string;
     constructor(public range: Range, public message: string, public severity?: number) {}
@@ -132,7 +136,9 @@ export const window = {
     showInformationMessage: async (..._args: any[]) => undefined,
     showWarningMessage: async (..._args: any[]) => undefined,
     showErrorMessage: async (..._args: any[]) => undefined,
-    showInputBox: async (..._args: any[]) => undefined
+    showInputBox: async (..._args: any[]) => undefined,
+    showOpenDialog: async (..._args: any[]) => undefined,
+    withProgress: async (_options: any, task: any) => task({ report: () => undefined }, { isCancellationRequested: false })
 };
 
 export const languages = {

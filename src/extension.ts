@@ -78,22 +78,73 @@ export async function activate(context: vscode.ExtensionContext) {
             runDiagnostics(doc);
         }
     };
+    const runIndexAndDiagnostics = async (options: { interactive?: boolean; changedFiles?: string[]; forceFull?: boolean }) => {
+        await storeIndexer.index(options);
+        runAllDiagnostics();
+    };
+    let configRefreshInFlight: Promise<void> | null = null;
+    let pendingConfigRefresh = false;
+    const triggerConfigRefresh = () => {
+        if (configRefreshInFlight) {
+            pendingConfigRefresh = true;
+            return configRefreshInFlight;
+        }
+
+        const progressRun = vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Vuex Helper: Updating store configuration...'
+            },
+            async () => {
+                try {
+                    storeIndexer.resetEntryInteractionState();
+                    await runIndexAndDiagnostics({ interactive: true, forceFull: true });
+                    if (storeIndexer.getStoreEntryPath()) {
+                        void vscode.window.showInformationMessage('Vuex Helper: Store configuration updated.');
+                    } else {
+                        void vscode.window.showWarningMessage('Vuex Helper: No Vuex store entry is currently configured or auto-detected.');
+                    }
+                } catch (error) {
+                    void vscode.window.showErrorMessage(`Vuex Helper: Failed to re-index store. ${error}`);
+                }
+            }
+        );
+        configRefreshInFlight = Promise.resolve(progressRun).then(
+            async () => {
+                configRefreshInFlight = null;
+                if (pendingConfigRefresh) {
+                    pendingConfigRefresh = false;
+                    await triggerConfigRefresh();
+                }
+            },
+            async (error) => {
+                configRefreshInFlight = null;
+                if (pendingConfigRefresh) {
+                    pendingConfigRefresh = false;
+                    await triggerConfigRefresh();
+                }
+                throw error;
+            }
+        );
+
+        return configRefreshInFlight;
+    };
 
     // 定义在 runAllDiagnostics 之后，确保回调闭包引用的变量已初始化
     const scheduler = new ReindexScheduler((changedFiles) => {
         // Save/config-driven re-index should not interrupt users with setup prompts.
         // 索引完成后刷新所有已打开文档的诊断
-        void storeIndexer.index({
+        void runIndexAndDiagnostics({
             interactive: false,
             changedFiles,
             forceFull: changedFiles.length === 0
-        }).then(runAllDiagnostics);
+        });
     });
     context.subscriptions.push(scheduler);
 
     // Initial indexing: allow one-time interactive guidance if store entry cannot be detected.
     // 索引完成后对所有已打开文档执行诊断
-    void storeIndexer.index({ interactive: true }).then(runAllDiagnostics);
+    void runIndexAndDiagnostics({ interactive: true });
 
     // 文档打开时执行诊断（处理扩展激活后新打开的文件）
     context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(runDiagnostics));
@@ -115,8 +166,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // Re-index on configuration change
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('vuexHelper.storeEntry')) {
-            scheduler.schedule();
-            vscode.window.showInformationMessage('Vuex Helper: Store configuration updated. Re-indexing...');
+            if (storeIndexer.consumeInternalStoreEntryConfigChange()) {
+                return;
+            }
+            void triggerConfigRefresh();
         }
     }));
 
@@ -153,8 +206,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('vuexHelper.reindex', () => {
             vscode.window.showInformationMessage('Vuex Helper: Re-indexing store...');
-            void storeIndexer.index({ interactive: true, forceFull: true }).then(() => {
-                runAllDiagnostics();
+            void runIndexAndDiagnostics({ interactive: true, forceFull: true }).then(() => {
                 vscode.window.showInformationMessage('Vuex Helper: Re-index complete.');
             });
         })
