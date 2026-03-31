@@ -63,7 +63,7 @@ describe('Vuex Store Analysis', () => {
             .filter((item) => item.modulePath.join('/') === 'user')
             .map((item) => item.name)
             .sort();
-        assert.deepStrictEqual(userMutations, ['ADD_ROLE', 'SET_AGE', 'SET_NAME', 'SET_PROFILE', 'testName', 'toggleActive']);
+        assert.deepStrictEqual(userMutations, ['ADD_ROLE', 'SET_AGE', 'SET_NAME', 'SET_PROFILE', 'setDisplayName', 'testName', 'toggleActive']);
 
         const userActions = storeMap!.actions
             .filter((item) => item.modulePath.join('/') === 'user')
@@ -84,6 +84,14 @@ describe('Vuex Store Analysis', () => {
 
         const displayNameGetter = indexer.getIndexedItem('getter', 'displayName', 'user');
         assert.ok(displayNameGetter, 'Should resolve getter key defined by exported const');
+    });
+
+    it('should index exported-const computed mutation keys from simple-project', async () => {
+        const indexer = new StoreIndexer(fixtureRoot);
+        await indexer.index();
+
+        const setDisplayNameMutation = indexer.getIndexedItem('mutation', 'setDisplayName', 'user');
+        assert.ok(setDisplayNameMutation, 'Should resolve mutation key defined by exported const');
     });
 
 });
