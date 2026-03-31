@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { runTests } from '@vscode/test-electron';
+import { resolveVSCodeTestVersion } from './vscodeTestConfig';
 
 type HostExtMode = 'isolated' | 'with-vue';
 type SupportedLangExtensionId = 'vue.volar' | 'octref.vetur';
@@ -154,6 +155,7 @@ async function main() {
         const workspacePath = path.resolve(__dirname, '../../test/fixtures/simple-project');
         const launchArgs = [workspacePath];
         const mode = resolveHostExtMode();
+        const version = resolveVSCodeTestVersion('HOST_TEST_VSCODE_VERSION', 'VSCODE_TEST_VERSION');
 
         if (mode === 'isolated') {
             launchArgs.push('--disable-extensions');
@@ -182,6 +184,7 @@ async function main() {
         }
 
         await runTests({
+            version,
             extensionDevelopmentPath,
             extensionTestsPath,
             launchArgs
