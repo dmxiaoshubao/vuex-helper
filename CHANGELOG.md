@@ -2,6 +2,17 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.2.2] - 2026-04-01
+
+### Fixed
+
+- **Store entry config refresh flow**: Refined `vuexHelper.storeEntry` refresh behavior so entry changes propagate more reliably without leaving stale store-entry state or missed reindex paths.
+
+### Improved
+
+- **Computed-key parser regression coverage**: Aligned parser expectations around computed mutation keys to keep fixture behavior and parser assertions in sync.
+- **Pinned VS Code host version**: Locked the VS Code test host version to improve reproducibility and reduce environment drift in host verification.
+
 ## [1.2.1] - 2026-03-25
 
 ### Fixed

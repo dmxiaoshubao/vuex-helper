@@ -133,7 +133,7 @@
 | 对象风格 commit                             | ✅   | `commit({ type: 'inc' })`                          |
 | `state` 函数形式                            | ✅   | `state: () => ({})`                                |
 | 嵌套 state                                  | ✅   | 递归解析                                           |
-| 计算属性名                                  | ✅   | ``[SOME_MUTATION](state) {}``                      |
+| 计算属性名                                  | ✅   | ``[SOME_MUTATION]`` ``(state) {}``                |
 | 动态模块 import/require                     | ✅   | ES Module 和 CommonJS                              |
 | 命名空间模块                                | ✅   | 含嵌套模块                                         |
 | `this` 别名补全                             | ✅   | `const _t = this; _t.`                             |
@@ -164,6 +164,14 @@
   - 绝对路径: `/Users/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 1.2.2
+
+本次为补丁修复版本，重点收敛配置刷新链路与发布验证稳定性：
+
+- **修复**: `vuexHelper.storeEntry` 变更后的刷新链路更稳定，降低入口配置更新后仍沿用旧 store 入口或未及时重建索引的问题。
+- **优化**: 补强 computed mutation key 相关 parser 回归断言，保证真实夹具与解析预期持续一致。
+- **优化**: VS Code 宿主测试固定到指定版本，提升不同环境下发版验证的一致性与可复现性。
 
 ### 1.2.1
 

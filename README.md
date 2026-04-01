@@ -141,7 +141,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | Object-style commit                         | ✅     | `commit({ type: 'inc' })`                          |
 | `state` as function                         | ✅     | `state: () => ({})`                                |
 | Nested state                                | ✅     | Recursive parsing                                  |
-| Computed property keys                      | ✅     | ``[SOME_MUTATION](state) {}``                      |
+| Computed property keys                      | ✅     | ``[SOME_MUTATION]`` ``(state) {}``                |
 | Dynamic module import/require               | ✅     | ES Module & CommonJS                               |
 | Namespaced modules                          | ✅     | Including nested                                   |
 | `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
@@ -157,6 +157,14 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | Manual reindex command                      | ✅     | `vuexHelper.reindex` via Command Palette           |
 
 ## Release Notes
+
+### 1.2.2
+
+Patch release focused on configuration refresh reliability and release verification stability:
+
+- **Fixed**: Store entry configuration refresh flow is now more reliable after `vuexHelper.storeEntry` changes, reducing stale entry state and missed reindex behavior.
+- **Improved**: Parser regression coverage was tightened around computed mutation key expectations to keep store-index behavior aligned with real fixtures.
+- **Improved**: VS Code host test runs are now pinned to a fixed test host version, making release verification more reproducible across environments.
 
 ### 1.2.1
 
