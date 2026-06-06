@@ -203,6 +203,27 @@ function createAliasWorkspace() {
 }
 
 describe('VuexHoverProvider state access', () => {
+    it('should show a trusted find-references link on Vuex definition hover', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `const state = {\n\n\n\n\ncount: 0\n}`;
+        const char = text.split('\n')[5].indexOf('count') + 2;
+        const document = createDocument(text, '/mock/workspace/src/store/index.js');
+
+        const hover = await provider.provideHover(document, { line: 5, character: char } as any, {} as any);
+
+        assert.ok(hover, 'Definition hover should be resolved');
+        const contents = (hover as any).contents;
+        const md = contents?.value || '';
+        assert.strictEqual(md.includes('State: count: number'), false, 'Definition hover should not duplicate field info');
+        assert.strictEqual(md.includes('Defined in:'), false, 'Definition hover should not duplicate definition path');
+        assert.ok(md.includes('[Find All References](command:vuexHelper.findReferences?'), 'Hover should include English find references command link by default');
+        assert.deepStrictEqual(
+            contents?.isTrusted,
+            { enabledCommands: ['vuexHelper.findReferences'] },
+            'Find references command link should be explicitly trusted'
+        );
+    });
+
     it('should show Vuex hover for state.profile.name inside mapState callback', async () => {
         const provider = new VuexHoverProvider(new MockStoreIndexer());
         const text = `<script>\nimport { createNamespacedHelpers } from 'vuex'\nconst { mapState: mapUserState } = createNamespacedHelpers('user')\nexport default {\n  computed: {\n    ...mapUserState({ profileName: state => state.profile.name })\n  }\n}\n</script>`;

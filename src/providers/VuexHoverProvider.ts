@@ -4,6 +4,7 @@ import { VuexContextScanner } from '../services/VuexContextScanner';
 import { ComponentMapper } from '../services/ComponentMapper';
 import { VuexLookupService } from '../services/VuexLookupService';
 import { PathResolver } from '../utils/PathResolver';
+import { VuexAnyItem, VuexItemType } from '../services/StoreIndexer';
 import {
     collectStoreLikeNames,
     extractStateAccessPath,
@@ -63,6 +64,9 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const range = document.getWordRangeAtPosition(position);
         if (!range) return undefined;
         const word = document.getText(range);
+        const definitionHover = this.findDefinitionHover(document, range, word);
+        if (definitionHover) return definitionHover;
+
         const storeLikeNames = await this.getStoreLikeNames(document);
         const storeLikeNameSet = new Set(storeLikeNames);
         
@@ -242,32 +246,48 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             currentNamespace,
             preferLocal
         }) as { defLocation: vscode.Location, documentation?: string } | undefined;
-        let labelPrefix = '';
-
-        if (type === 'action') labelPrefix = 'Action';
-        else if (type === 'mutation') labelPrefix = 'Mutation';
-        else if (type === 'state') labelPrefix = 'State';
-        else if (type === 'getter') labelPrefix = 'Getter';
 
         if (result) {
-            const md = new vscode.MarkdownString();
-            
-            let label = `${labelPrefix}: ${name}`;
-            if (type === 'state') {
-                const stateInfo = result as any; // Cast to access displayType
-                if (stateInfo.displayType) {
-                    label += `: ${stateInfo.displayType}`;
-                }
-            }
-            
-            md.appendCodeblock(label, 'typescript');
-            if (result.documentation) {
-                md.appendMarkdown(`\n\n${result.documentation}\n\n`);
-            }
-            md.appendMarkdown(`Defined in: ${this.formatDefinitionLink(result.defLocation)}`);
-            return new vscode.Hover(md);
+            return new vscode.Hover(this.buildHoverMarkdown(name, type, result));
         }
         return undefined;
+    }
+
+    private findDefinitionHover(
+        document: vscode.TextDocument,
+        range: vscode.Range,
+        word: string
+    ): vscode.Hover | undefined {
+        const found = this.findDefinitionItem(document, range, word);
+        if (!found) return undefined;
+
+        const md = new vscode.MarkdownString();
+        md.appendMarkdown(`[Find All References](${this.formatFindReferencesCommand(found.item.defLocation)})`);
+        md.isTrusted = { enabledCommands: ['vuexHelper.findReferences'] };
+        return new vscode.Hover(md);
+    }
+
+    private findDefinitionItem(
+        document: vscode.TextDocument,
+        range: vscode.Range,
+        word: string
+    ): { type: VuexItemType; item: VuexAnyItem } | undefined {
+        const storeMap = this.storeIndexer.getStoreMap();
+        if (!storeMap) return undefined;
+
+        const allItems: Array<{ type: VuexItemType; item: VuexAnyItem }> = [
+            ...storeMap.state.map(item => ({ type: 'state' as const, item })),
+            ...storeMap.getters.map(item => ({ type: 'getter' as const, item })),
+            ...storeMap.mutations.map(item => ({ type: 'mutation' as const, item })),
+            ...storeMap.actions.map(item => ({ type: 'action' as const, item })),
+        ];
+
+        return allItems.find(({ item }) => {
+            if (item.name !== word) return false;
+            if (!sameUri(document.uri, item.defLocation.uri)) return false;
+            const defStart = locationStart(item.defLocation);
+            return !!defStart && rangeContainsPosition(range, defStart);
+        });
     }
 
     private formatDefinitionLink(location: vscode.Location): string {
@@ -276,6 +296,36 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const target = buildLocationUriString(location.uri, position);
         return `[${label}](${target})`;
     }
+
+    private formatFindReferencesCommand(location: vscode.Location): string {
+        const position = locationStart(location) ?? new vscode.Position(0, 0);
+        const args = encodeURIComponent(JSON.stringify([
+            location.uri.toString(),
+            position.line,
+            position.character
+        ]));
+        return `command:vuexHelper.findReferences?${args}`;
+    }
+
+    private buildHoverMarkdown(
+        name: string,
+        type: 'state' | 'getter' | 'mutation' | 'action',
+        item: { defLocation: vscode.Location; documentation?: string; displayType?: string }
+    ): vscode.MarkdownString {
+        const md = new vscode.MarkdownString();
+        let label = `${labelForType(type)}: ${name}`;
+        if (type === 'state' && item.displayType) {
+            label += `: ${item.displayType}`;
+        }
+
+        md.appendCodeblock(label, 'typescript');
+        if (item.documentation) {
+            md.appendMarkdown(`\n\n${item.documentation}\n\n`);
+        }
+        md.appendMarkdown(`Defined in: ${this.formatDefinitionLink(item.defLocation)}`);
+        return md;
+    }
+
 
     private async getStoreLikeNames(document: vscode.TextDocument): Promise<string[]> {
         const uri = document.uri?.toString();
@@ -300,6 +350,13 @@ export class VuexHoverProvider implements vscode.HoverProvider {
     }
 }
 
+function labelForType(type: 'state' | 'getter' | 'mutation' | 'action'): string {
+    if (type === 'action') return 'Action';
+    if (type === 'mutation') return 'Mutation';
+    if (type === 'state') return 'State';
+    return 'Getter';
+}
+
 function locationStart(location: vscode.Location): vscode.Position | undefined {
     const range = (location as any).range;
     if (range?.start) return range.start;
@@ -308,6 +365,21 @@ function locationStart(location: vscode.Location): vscode.Position | undefined {
     if (rangeOrPosition?.start) return rangeOrPosition.start;
     if (typeof rangeOrPosition?.line === 'number') return rangeOrPosition;
     return undefined;
+}
+
+function sameUri(a: vscode.Uri, b: vscode.Uri): boolean {
+    const aFsPath = (a as any).fsPath;
+    const bFsPath = (b as any).fsPath;
+    if (aFsPath && bFsPath) return aFsPath === bFsPath;
+    return a.toString() === b.toString();
+}
+
+function rangeContainsPosition(range: vscode.Range, position: vscode.Position): boolean {
+    const start = (range as any).start;
+    const end = (range as any).end;
+    if (!start || !end) return false;
+    if (position.line !== start.line || position.line !== end.line) return false;
+    return position.character >= start.character && position.character <= end.character;
 }
 
 function shouldCheckLocalBindingForMappedItem(rawPrefix: string, thisAliases: readonly string[]): boolean {

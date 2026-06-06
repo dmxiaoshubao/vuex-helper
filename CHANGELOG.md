@@ -2,11 +2,11 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
-## [1.3.0] - 2026-06-06
+## [1.3.1] - 2026-06-07
 
 ### Added
 
-- **Find references from Vuex definitions**: State, getter, mutation, and action definitions now support **Find All References** (`Shift+F12`) for statically resolvable Vuex API references, including map helpers, `$store` access, and `commit/dispatch`. Mapped component member usages are intentionally excluded to keep results precise.
+- **Find references from Vuex definitions**: State, getter, mutation, and action definition hovers now include **Find All References**. It opens statically resolvable Vuex API references, including map helpers, `$store` access, and `commit/dispatch`. Mapped component member usages are intentionally excluded to keep results precise.
 - **Clickable hover definition paths**: Hover `Defined in` paths now open the target definition location directly.
 
 ### Fixed

@@ -2,6 +2,11 @@
 export class Uri {
     constructor(public fsPath: string, public scheme: string = 'file', public fragment: string = '') {}
     static file(path: string) { return new Uri(path); }
+    static parse(value: string) {
+        const match = /^([^:]+):\/\/([^#]*)(?:#(.*))?$/.exec(value);
+        if (!match) return new Uri(value);
+        return new Uri(match[2], match[1], match[3] || '');
+    }
     with(change: { fragment?: string }) { return new Uri(this.fsPath, this.scheme, change.fragment ?? this.fragment); }
     toString() { return `${this.scheme}://${this.fsPath}${this.fragment ? `#${this.fragment}` : ''}`; }
 }
@@ -34,11 +39,18 @@ export class Range {
 }
 
 export class Location {
-    constructor(public uri: Uri, public rangeOrPosition: Position | Range | any) {}
+    public range: Range;
+
+    constructor(public uri: Uri, public rangeOrPosition: Position | Range | any) {
+        this.range = rangeOrPosition instanceof Range
+            ? rangeOrPosition
+            : new Range(rangeOrPosition, rangeOrPosition);
+    }
 }
 
 export class MarkdownString {
     public value = '';
+    public isTrusted?: boolean | { enabledCommands: readonly string[] };
 
     constructor(initialValue?: string) {
         if (initialValue) this.value = initialValue;
@@ -78,6 +90,23 @@ export class CompletionList {
     constructor(public items: any[], public isIncomplete: boolean = false) {}
 }
 
+export class EventEmitter<T = any> {
+    public readonly event = (_listener: (value: T) => any) => noopDisposable;
+    fire(_value?: T) {}
+    dispose() {}
+}
+
+export class TreeItem {
+    public contextValue?: string;
+    public description?: string | boolean;
+    public iconPath?: any;
+    public command?: any;
+
+    constructor(public label: any, public collapsibleState?: number) {}
+}
+
+export class Selection extends Range {}
+
 export const CompletionItemKind = {
     Property: 1,
     Field: 2,
@@ -94,6 +123,17 @@ export const ConfigurationTarget = {
 
 export const ProgressLocation = {
     Notification: 15
+};
+
+export const TreeItemCollapsibleState = {
+    None: 0,
+    Collapsed: 1,
+    Expanded: 2
+};
+
+export const ThemeIcon = {
+    File: { id: 'file' },
+    Folder: { id: 'folder' }
 };
 
 export class Diagnostic {
@@ -159,4 +199,8 @@ export const languages = {
         has: (_uri: any) => false,
         name: _name || 'mock',
     })
+};
+
+export const extensions = {
+    getExtension: (_id: string) => undefined as any
 };

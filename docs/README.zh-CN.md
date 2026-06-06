@@ -25,7 +25,7 @@
 
 可以从 Vuex 定义处反查显式 Vuex API 引用。
 
-- **定义处引用查找**: 在 state、getter、mutation 或 action 定义名上执行 **Find All References**（`Shift+F12`），可列出可静态解析的 Vuex API 引用。
+- **定义处引用查找**: 在 state、getter、mutation 或 action 定义名上悬浮，并点击 **Find All References**，可列出可静态解析的 Vuex API 引用。
 - **支持的使用形式**: 覆盖 `mapState` / `mapGetters` / `mapMutations` / `mapActions`、`$store.state/getters/commit/dispatch`、直接导入 store 实例访问，以及 store 内部 `commit/dispatch` 引用。
 - **范围说明**: `this.userName`、`this.setUserName()`、`{{ userName }}`、`:user-name="userName"` 这类映射后的组件普通成员使用会被刻意排除，避免引用列表噪声和歧义。
 
@@ -153,7 +153,7 @@
 | `{ root: true }` 命名空间切换               | ✅   | commit/dispatch 的 root 选项                       |
 | State 链式路径中间词跳转                    | ✅   | 点击 `state.user.name` 中的 `user`                 |
 | Hover `Defined in` 路径跳转                 | ✅   | 点击悬浮提示中的定义路径直接打开目标位置           |
-| Vuex 定义处查找引用                         | ✅   | 在定义名上 `Shift+F12`；返回显式 Vuex API 引用，不包含映射后的组件普通成员使用 |
+| Vuex 定义处查找引用                         | ✅   | 在定义处 hover 点击 `Find All References`；返回显式 Vuex API 引用，不包含映射后的组件普通成员使用 |
 | Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖且未配置 `vuexHelper.storeEntry` 时静默不激活 |
 | `rootState` / `rootGetters`                 | ✅   | 完整支持补全、跳转和悬浮提示                       |
 | `context.state` / `context.getters`         | ✅   | store 文件中的补全、跳转、悬浮与诊断               |
@@ -180,11 +180,11 @@
 
 ## 更新日志
 
-### 1.3.0
+### 1.3.1
 
 本次为功能增强版本，重点补齐导航、引用查找与发布包体治理：
 
-- **新增**: Vuex 定义处支持 **Find All References**。在 state、getter、mutation 或 action 定义名上执行 `Shift+F12`，可查找 map 辅助函数、`$store` 访问、`commit/dispatch` 等可静态解析的 Vuex API 引用。
+- **新增**: Vuex 定义处 hover 支持 **Find All References**。在 state、getter、mutation 或 action 定义名上点击该链接，可查找 map 辅助函数、`$store` 访问、`commit/dispatch` 等可静态解析的 Vuex API 引用。
 - **新增**: 悬浮提示中的 `Defined in` 路径支持点击跳转，可直接从 hover 弹窗打开定义位置。
 - **修复**: 映射 Vuex 字段不再覆盖同名局部变量，避免在组件 methods、computed 函数等局部作用域中出现错误的 Vuex hover / definition。
 - **修复**: `` `${moduleName}/SET_NAME` ``、`moduleName + '/SET_NAME'` 这类动态 `commit/dispatch` 路径不再被猜测成静态 Vuex 引用；`` `user/SET_NAME` `` 这类纯静态模板串仍可正常识别。

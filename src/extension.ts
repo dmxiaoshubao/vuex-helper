@@ -9,6 +9,7 @@ import { VuexReferenceProvider } from './providers/VuexReferenceProvider';
 import { ReindexScheduler } from './services/ReindexScheduler';
 import { ComponentMapper } from './services/ComponentMapper';
 import { VuexDiagnosticProvider } from './services/VuexDiagnosticProvider';
+import { openReferencesInSideView } from './services/ReferencesViewBridge';
 
 
 /**
@@ -214,12 +215,52 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     const selector = [{ language: 'vue', scheme: 'file' }, { language: 'javascript', scheme: 'file' }, { language: 'typescript', scheme: 'file' }];
+    const referenceProvider = new VuexReferenceProvider(storeIndexer, sharedComponentMapper);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('vuexHelper.findReferences', async (uriArg?: unknown, lineArg?: unknown, characterArg?: unknown) => {
+            const target = await resolveReferenceCommandTarget(uriArg, lineArg, characterArg);
+            if (!target) return;
+
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Vuex Helper: Finding references...'
+                },
+                async (_progress, token) => {
+                    const references = await referenceProvider.provideReferences(
+                        target.document,
+                        target.position,
+                        { includeDeclaration: false },
+                        token
+                    );
+                    if (token.isCancellationRequested) return;
+                    if (references.length === 0) {
+                        void vscode.window.showInformationMessage('Vuex Helper: No Vuex references found.');
+                        return;
+                    }
+                    const openedInSideView = await openReferencesInSideView(
+                        target.document.uri,
+                        target.position,
+                        references
+                    );
+                    if (!openedInSideView) {
+                        await vscode.commands.executeCommand(
+                            'editor.action.showReferences',
+                            target.document.uri,
+                            target.position,
+                            references
+                        );
+                    }
+                }
+            );
+        })
+    );
 
     context.subscriptions.push(
         vscode.languages.registerDefinitionProvider(selector, new VuexDefinitionProvider(storeIndexer, sharedComponentMapper)),
         vscode.languages.registerCompletionItemProvider(selector, new VuexCompletionItemProvider(storeIndexer, sharedComponentMapper), "'", '"', '.'),
-        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper)),
-        vscode.languages.registerReferenceProvider(selector, new VuexReferenceProvider(storeIndexer, sharedComponentMapper))
+        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper))
     );
 
     // 文档关闭时清除诊断
@@ -229,3 +270,24 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
+
+async function resolveReferenceCommandTarget(
+    uriArg?: unknown,
+    lineArg?: unknown,
+    characterArg?: unknown
+): Promise<{ document: vscode.TextDocument; position: vscode.Position } | undefined> {
+    if (typeof uriArg === 'string' && typeof lineArg === 'number' && typeof characterArg === 'number') {
+        const uri = vscode.Uri.parse(uriArg);
+        return {
+            document: await vscode.workspace.openTextDocument(uri),
+            position: new vscode.Position(lineArg, characterArg)
+        };
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return undefined;
+    return {
+        document: editor.document,
+        position: editor.selection.active
+    };
+}
