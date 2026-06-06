@@ -25,10 +25,11 @@ Jump directly to the definition of Vuex store properties from your components.
 
 ### 2. Find References
 
-Find every statically resolvable Vuex usage from the store definition itself.
+Find explicit Vuex API references from the store definition itself.
 
-- **Definition-Side References**: Run **Find All References** (`Shift+F12`) on a state, getter, mutation, or action definition to list its component and store usages.
-- **Supported Usage Forms**: Covers map helpers, `$store.commit/dispatch`, imported store instance calls, and store-internal `commit/dispatch` references.
+- **Definition-Side References**: Run **Find All References** (`Shift+F12`) on a state, getter, mutation, or action definition to list statically resolvable Vuex API references.
+- **Supported Usage Forms**: Covers `mapState` / `mapGetters` / `mapMutations` / `mapActions`, `$store.state/getters/commit/dispatch`, imported store instance access, and store-internal `commit/dispatch` references.
+- **Scope**: Mapped component usages such as `this.userName`, `this.setUserName()`, `{{ userName }}`, or `:user-name="userName"` are intentionally excluded from reference results to avoid noisy and ambiguous matches.
 
 ### 3. Intelligent Code Completion (IntelliSense)
 
@@ -160,7 +161,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | `{ root: true }` namespace switch           | ✅     | commit/dispatch with root option                   |
 | State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
 | Hover `Defined in` navigation               | ✅     | Click the hover definition path to open the target |
-| Find references from Vuex definitions       | ✅     | `Shift+F12` on state/getter/mutation/action definitions |
+| Find references from Vuex definitions       | ✅     | `Shift+F12` on definitions; reports explicit Vuex API references, not mapped component member usages |
 | Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency and `vuexHelper.storeEntry` is unset |
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
 | `context.state` / `context.getters`         | ✅     | Store-file completion, definition, hover, and diagnostics |
@@ -176,7 +177,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 
 Feature release focused on navigation, references, and packaging hardening:
 
-- **Added**: Vuex definitions now support **Find All References**. Run `Shift+F12` on a store state, getter, mutation, or action definition to find statically resolvable usages.
+- **Added**: Vuex definitions now support **Find All References**. Run `Shift+F12` on a store state, getter, mutation, or action definition to find statically resolvable Vuex API references such as map helpers, `$store` access, and `commit/dispatch`.
 - **Added**: Hover `Defined in` paths are clickable links, so you can jump to the definition directly from the hover popup.
 - **Fixed**: Mapped Vuex fields no longer shadow local variables with the same name, avoiding false Vuex hover/definition results in component methods and computed functions.
 - **Fixed**: Dynamic `commit/dispatch` paths such as `` `${moduleName}/SET_NAME` `` and `moduleName + '/SET_NAME'` are no longer guessed as static Vuex references, while static template literals like `` `user/SET_NAME` `` still resolve normally.
