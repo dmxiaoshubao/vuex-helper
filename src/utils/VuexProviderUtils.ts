@@ -33,6 +33,7 @@ interface ProviderScriptAnalysis {
     ast: t.File | null;
     probeCache: Map<string, ProviderScriptProbe | null>;
     scopePathCache: Map<number, any | null>;
+    fullScopePathCache: Map<number, any | null>;
     hasExplicitStoreStructure?: boolean;
 }
 
@@ -372,30 +373,7 @@ export function hasLocalBindingAtPosition(
     position: vscode.Position,
     name: string
 ): boolean {
-    const analysis = getProviderScriptAnalysis(document);
-    if (analysis.script?.content && analysis.ast) {
-        const documentOffset = document.offsetAt(position);
-        const localOffset = documentOffset - analysis.script.offset;
-        if (localOffset >= 0 && localOffset <= analysis.script.content.length) {
-            let matched = false;
-            traverse(analysis.ast, {
-                Identifier(path: any) {
-                    const node = path.node;
-                    if (node.name !== name) return;
-                    const start = node.start ?? -1;
-                    const end = node.end ?? -1;
-                    if (localOffset < start || localOffset > end) return;
-                    if (!path.isReferencedIdentifier() && !path.isBindingIdentifier()) return;
-
-                    matched = !!path.scope.getBinding(name);
-                    path.stop();
-                },
-            } as any);
-            if (matched) return true;
-        }
-    }
-
-    const scopePath = findScopePathAtPosition(document, position);
+    const scopePath = findFullScopePathAtPosition(document, position) ?? findScopePathAtPosition(document, position);
     if (!scopePath) return false;
 
     const binding = scopePath.scope?.getBinding?.(name);
@@ -919,6 +897,10 @@ function findFullScopePathAtPosition(document: vscode.TextDocument, position: vs
     const documentOffset = document.offsetAt(position);
     const localOffset = documentOffset - analysis.script.offset;
     if (localOffset < 0 || localOffset > analysis.script.content.length) return undefined;
+    const cached = analysis.fullScopePathCache.get(localOffset);
+    if (cached !== undefined) {
+        return cached || undefined;
+    }
 
     let bestPath: any | undefined;
     let bestSpan = Number.POSITIVE_INFINITY;
@@ -953,6 +935,7 @@ function findFullScopePathAtPosition(document: vscode.TextDocument, position: vs
         },
     } as any);
 
+    analysis.fullScopePathCache.set(localOffset, bestPath ?? null);
     return bestPath;
 }
 
@@ -1259,12 +1242,16 @@ function extractScriptPrefixAtPosition(
 
 function getProviderScriptAnalysis(document: vscode.TextDocument): ProviderScriptAnalysis {
     const cacheKey = document as unknown as object;
-    const text = document.getText();
     const version = typeof (document as any).version === 'number'
         ? (document as any).version
         : undefined;
 
     const cached = providerScriptAnalysisCache.get(cacheKey);
+    if (cached && version !== undefined && cached.version === version) {
+        return cached;
+    }
+
+    const text = document.getText();
     if (cached && cached.version === version && cached.text === text) {
         return cached;
     }
@@ -1277,6 +1264,7 @@ function getProviderScriptAnalysis(document: vscode.TextDocument): ProviderScrip
         ast: script ? parseProviderAst(script.content) : null,
         probeCache: new Map(),
         scopePathCache: new Map(),
+        fullScopePathCache: new Map(),
     };
     providerScriptAnalysisCache.set(cacheKey, analysis);
     return analysis;

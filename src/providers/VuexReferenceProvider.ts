@@ -13,6 +13,12 @@ const REFERENCE_INCLUDE = '**/*.{vue,js,ts}';
 const REFERENCE_EXCLUDE = '**/{node_modules,dist,out,build,coverage,unpackage,.git,.vscode-test,.nuxt,.output}/**';
 const MAX_REFERENCE_FILES = 500;
 const MAX_REFERENCE_FILE_BYTES = 1024 * 1024;
+const MAX_REFERENCE_NAME_CANDIDATES = 1000;
+const REFERENCE_CONTEXT_WINDOW = 180;
+
+interface ReferenceScanBudget {
+    remainingNameCandidates: number;
+}
 
 export class VuexReferenceProvider implements vscode.ReferenceProvider {
     private readonly definitionProvider: VuexDefinitionProvider;
@@ -36,15 +42,7 @@ export class VuexReferenceProvider implements vscode.ReferenceProvider {
         if (!target) return [];
 
         const references = new Map<string, vscode.Location>();
-        if (context.includeDeclaration !== false) {
-            this.addLocation(references, target.item.defLocation);
-        }
-
-        const documents = await this.getCandidateDocuments(document, token);
-        for (const candidate of documents) {
-            if (token.isCancellationRequested) return Array.from(references.values());
-            await this.collectReferencesInDocument(candidate, target, references, token);
-        }
+        await this.collectReferencesFromCandidates(document, target, references, token);
 
         return Array.from(references.values());
     }
@@ -86,43 +84,55 @@ export class VuexReferenceProvider implements vscode.ReferenceProvider {
         return this.getAllItems().find(({ item }) => sameDefinitionLocation(item.defLocation, location));
     }
 
-    private async getCandidateDocuments(
+    private async collectReferencesFromCandidates(
         currentDocument: vscode.TextDocument,
+        target: VuexTargetItem,
+        references: Map<string, vscode.Location>,
         token: vscode.CancellationToken
-    ): Promise<vscode.TextDocument[]> {
-        const byUri = new Map<string, vscode.TextDocument>();
-        this.addDocument(byUri, currentDocument);
+    ): Promise<void> {
+        const scannedUris = new Set<string>();
+        const scanBudget: ReferenceScanBudget = { remainingNameCandidates: MAX_REFERENCE_NAME_CANDIDATES };
+        const scanDocument = async (document: vscode.TextDocument): Promise<void> => {
+            if (token.isCancellationRequested || scanBudget.remainingNameCandidates <= 0) return;
+            if (!isReferenceDocument(document)) return;
+            const key = document.uri.toString();
+            if (scannedUris.has(key)) return;
+            scannedUris.add(key);
+            await this.collectReferencesInDocument(document, target, references, token, scanBudget);
+        };
+
+        await scanDocument(currentDocument);
 
         for (const openDocument of vscode.workspace.textDocuments || []) {
-            if (token.isCancellationRequested) return Array.from(byUri.values());
-            this.addDocument(byUri, openDocument);
+            if (token.isCancellationRequested || scanBudget.remainingNameCandidates <= 0) return;
+            await scanDocument(openDocument);
         }
 
         if (typeof (vscode.workspace as any).findFiles !== 'function') {
-            return Array.from(byUri.values());
+            return;
         }
 
         const uris = await vscode.workspace.findFiles(REFERENCE_INCLUDE, REFERENCE_EXCLUDE, MAX_REFERENCE_FILES);
         for (const uri of uris) {
-            if (token.isCancellationRequested) return Array.from(byUri.values());
+            if (token.isCancellationRequested || scanBudget.remainingNameCandidates <= 0) return;
+            if (scannedUris.has(uri.toString())) continue;
             if (typeof (vscode.workspace as any).openTextDocument !== 'function') continue;
             try {
                 if (await isLargeReferenceFile(uri)) continue;
                 const doc = await vscode.workspace.openTextDocument(uri);
-                this.addDocument(byUri, doc);
+                await scanDocument(doc);
             } catch {
                 // 单个文件打开失败不应阻塞其它引用结果。
             }
         }
-
-        return Array.from(byUri.values());
     }
 
     private async collectReferencesInDocument(
         document: vscode.TextDocument,
         target: VuexTargetItem,
         references: Map<string, vscode.Location>,
-        token: vscode.CancellationToken
+        token: vscode.CancellationToken,
+        scanBudget: ReferenceScanBudget
     ): Promise<void> {
         const text = document.getText();
         const targetName = target.item.name;
@@ -131,11 +141,21 @@ export class VuexReferenceProvider implements vscode.ReferenceProvider {
             if (token.isCancellationRequested) return;
 
             if (isIdentifierBoundary(text, index, targetName.length)) {
+                if (!isLikelyVuexReferenceText(text, index, targetName.length, target.type)) {
+                    index = text.indexOf(targetName, index + targetName.length);
+                    continue;
+                }
+                if (scanBudget.remainingNameCandidates <= 0) return;
+                scanBudget.remainingNameCandidates--;
                 const position = positionAt(document, index + Math.min(1, targetName.length));
                 const definition = await this.definitionProvider.provideDefinition(document, position, token);
                 if (definitionMatchesTarget(definition, target.item.defLocation)) {
                     const range = document.getWordRangeAtPosition(position)
                         ?? new vscode.Range(positionAt(document, index), positionAt(document, index + targetName.length));
+                    if (isTargetDefinitionOccurrence(document.uri, range, target.item.defLocation)) {
+                        index = text.indexOf(targetName, index + targetName.length);
+                        continue;
+                    }
                     this.addLocation(references, new vscode.Location(document.uri, range));
                 }
             }
@@ -156,14 +176,86 @@ export class VuexReferenceProvider implements vscode.ReferenceProvider {
         ];
     }
 
-    private addDocument(target: Map<string, vscode.TextDocument>, document: vscode.TextDocument): void {
-        if (!['vue', 'javascript', 'typescript'].includes(document.languageId)) return;
-        target.set(document.uri.toString(), document);
-    }
-
     private addLocation(target: Map<string, vscode.Location>, location: vscode.Location): void {
         target.set(locationKey(location), location);
     }
+}
+
+function isReferenceDocument(document: vscode.TextDocument): boolean {
+    return ['vue', 'javascript', 'typescript'].includes(document.languageId);
+}
+
+function isLikelyVuexReferenceText(
+    text: string,
+    start: number,
+    length: number,
+    type: VuexItemType
+): boolean {
+    const lineStart = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+    const nextLineBreak = text.indexOf('\n', start);
+    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : text.length;
+    const lineText = text.slice(lineStart, lineEnd);
+    const localStart = start - lineStart;
+    const localEnd = localStart + length;
+    const before = lineText.slice(0, localStart);
+    const after = lineText.slice(localEnd);
+    const contextBefore = text.slice(Math.max(0, start - REFERENCE_CONTEXT_WINDOW), start);
+
+    if (isInsideStringLiteral(lineText, localStart)) {
+        return hasVuexStringReferenceContext(contextBefore, type);
+    }
+
+    if (hasMapHelperObjectKeyContext(contextBefore, after, type)) return true;
+    if (hasStoreInstanceMemberContext(before, type)) return true;
+
+    return false;
+}
+
+function isInsideStringLiteral(lineText: string, localStart: number): boolean {
+    const before = lineText.slice(0, localStart);
+    const quoteIndex = findNearestOpeningQuote(before);
+    if (quoteIndex < 0) return false;
+    const quote = before[quoteIndex];
+    return lineText.indexOf(quote, localStart) >= 0;
+}
+
+function findNearestOpeningQuote(text: string): number {
+    for (let i = text.length - 1; i >= 0; i--) {
+        const ch = text[i];
+        if ((ch === '\'' || ch === '"' || ch === '`') && text[i - 1] !== '\\') {
+            return i;
+        }
+    }
+    return -1;
+}
+
+function hasVuexStringReferenceContext(before: string, type: VuexItemType): boolean {
+    const context = before.slice(-REFERENCE_CONTEXT_WINDOW);
+    if (type === 'mutation' && /\b(?:commit|mapMutations)\s*[\(\[{,][\s\S]*$/.test(context)) return true;
+    if (type === 'action' && /\b(?:dispatch|mapActions)\s*[\(\[{,][\s\S]*$/.test(context)) return true;
+    if (type === 'state' && /\b(?:mapState|state|rootState|\$store)\b[\s\S]*$/.test(context)) return true;
+    if (type === 'getter' && /\b(?:mapGetters|getters|rootGetters|\$store)\b[\s\S]*$/.test(context)) return true;
+    return /\b(?:commit|dispatch|mapState|mapGetters|mapMutations|mapActions)\s*[\(\[{,][\s\S]*$/.test(context);
+}
+
+function hasMapHelperObjectKeyContext(before: string, after: string, type: VuexItemType): boolean {
+    if (!/^\s*:/.test(after)) return false;
+    const context = before.slice(-REFERENCE_CONTEXT_WINDOW);
+    if (type === 'mutation') return /\bmapMutations\s*[\(\{][\s\S]*$/.test(context);
+    if (type === 'action') return /\bmapActions\s*[\(\{][\s\S]*$/.test(context);
+    if (type === 'state') return /\bmapState\s*[\(\{][\s\S]*$/.test(context);
+    if (type === 'getter') return /\bmapGetters\s*[\(\{][\s\S]*$/.test(context);
+    return false;
+}
+
+function hasStoreInstanceMemberContext(before: string, type: VuexItemType): boolean {
+    if (type === 'state') {
+        return /\$store(?:\?\.|\.)state(?:(?:\?\.|\.)[A-Za-z_$][\w$]*)*(?:\?\.|\.)\s*$/.test(before);
+    }
+    if (type === 'getter') {
+        return /\$store(?:\?\.|\.)getters(?:(?:\?\.|\.)[A-Za-z_$][\w$]*)*(?:\?\.|\.)\s*$/.test(before);
+    }
+    return false;
 }
 
 function firstLocation(definition: vscode.Definition | undefined): vscode.Location | undefined {
@@ -192,6 +284,15 @@ function definitionMatchesTarget(definition: vscode.Definition | undefined, targ
     });
 }
 
+function isTargetDefinitionOccurrence(uri: vscode.Uri, range: vscode.Range, target: vscode.Location): boolean {
+    const targetStart = locationStart(target);
+    return uri.fsPath === target.uri.fsPath
+        && !!targetStart
+        && range.start.line === targetStart.line
+        && range.start.character <= targetStart.character
+        && targetStart.character <= range.end.character;
+}
+
 function sameDefinitionLocation(a: vscode.Location, b: vscode.Location): boolean {
     const aStart = locationStart(a);
     const bStart = locationStart(b);
@@ -214,8 +315,7 @@ function locationStart(location: vscode.Location): vscode.Position | undefined {
 
 function locationKey(location: vscode.Location): string {
     const start = locationStart(location);
-    const end = (location as any).range?.end ?? (location as any).rangeOrPosition?.end ?? start;
-    return `${location.uri.fsPath}:${start?.line ?? 0}:${start?.character ?? 0}:${end?.line ?? 0}:${end?.character ?? 0}`;
+    return `${location.uri.fsPath}:${start?.line ?? 0}:${start?.character ?? 0}`;
 }
 
 function positionAt(document: vscode.TextDocument, offset: number): vscode.Position {
