@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'glob';
 import * as parser from '@babel/parser';
 import traverse, { NodePath } from '@babel/traverse';
 import type * as t from '@babel/types';
@@ -179,8 +178,20 @@ export class EntryAnalyzer {
     }
 
     private async findEntryFiles(): Promise<string[]> {
-        const pattern = 'src/{main,index}.{js,ts}';
-        return glob(pattern, { cwd: this.workspaceRoot, absolute: true });
+        const candidates = ['main.js', 'main.ts', 'index.js', 'index.ts']
+            .map((file) => path.join(this.workspaceRoot, 'src', file));
+        const existing: string[] = [];
+
+        for (const file of candidates) {
+            try {
+                const stat = await fs.promises.stat(file);
+                if (stat.isFile()) existing.push(file);
+            } catch {
+                // 候选入口不存在时跳过，保持自动探测的最小成本。
+            }
+        }
+
+        return existing;
     }
 
     private async findStoreInjection(filePath: string): Promise<string | null> {

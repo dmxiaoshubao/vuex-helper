@@ -16,8 +16,26 @@ import {
     hasParamContextMemberAccess,
     hasParamBindingMemberAccess,
     hasRootTrueOption,
+    hasLocalBindingAtPosition,
+    collectThisAliasNames,
+    isThisAliasMemberPrefix,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
+
+function escapeMarkdown(value: string): string {
+    return value.replace(/([\\`*_[\]()])/g, '\\$1');
+}
+
+function buildLocationUriString(uri: vscode.Uri, position: vscode.Position): string {
+    const fragment = `L${position.line + 1},${position.character + 1}`;
+    const withFragment = typeof (uri as any).with === 'function'
+        ? (uri as any).with({ fragment })
+        : uri;
+    const value = withFragment.toString();
+    return typeof (uri as any).with === 'function'
+        ? value
+        : `${value}#${fragment}`;
+}
 
 export class VuexHoverProvider implements vscode.HoverProvider {
     private contextScanner: VuexContextScanner;
@@ -65,7 +83,10 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         const rawPrefix = lineText.substring(0, range.start.character);
         
         const mapping = this.componentMapper.getMapping(document);
-        const mappedItem = resolveMappedItem(mapping, rawPrefix, word);
+        const thisAliases = collectThisAliasNames(document, position);
+        const mappedItem = shouldCheckLocalBindingForMappedItem(rawPrefix, thisAliases) && hasLocalBindingAtPosition(document, position, word)
+            ? undefined
+            : resolveMappedItem(mapping, rawPrefix, word, thisAliases);
         if (mappedItem) {
             return this.findHover(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
@@ -187,9 +208,19 @@ export class VuexHoverProvider implements vscode.HoverProvider {
              if (validatedContext.type === 'state' && stateAccessPath) {
                  return this.findHover(stateAccessPath, 'state', validatedContext.namespace, currentNamespace, preferLocalFromContext);
              }
+             const explicitPath = stringLiteralObj ? stringLiteralObj.path : undefined;
+             if (isCommitDispatchContext(validatedContext.method) && !explicitPath) {
+                 return undefined;
+             }
              const lookupNamespace = validatedContext.type === 'state'
                  ? currentNamespace
                  : currentAssetNamespace;
+             if (explicitPath && explicitPath.includes('/')) {
+                 const parts = explicitPath.split('/');
+                 const name = parts.pop()!;
+                 const namespace = parts.join('/');
+                 return this.findHover(name, validatedContext.type, namespace, currentNamespace, preferLocalFromContext);
+             }
              return this.findHover(word, validatedContext.type, validatedContext.namespace, lookupNamespace, preferLocalFromContext);
         }
 
@@ -233,10 +264,17 @@ export class VuexHoverProvider implements vscode.HoverProvider {
             if (result.documentation) {
                 md.appendMarkdown(`\n\n${result.documentation}\n\n`);
             }
-            md.appendMarkdown(`Defined in: **${vscode.workspace.asRelativePath(result.defLocation.uri)}**`);
+            md.appendMarkdown(`Defined in: ${this.formatDefinitionLink(result.defLocation)}`);
             return new vscode.Hover(md);
         }
         return undefined;
+    }
+
+    private formatDefinitionLink(location: vscode.Location): string {
+        const position = locationStart(location) ?? new vscode.Position(0, 0);
+        const label = escapeMarkdown(vscode.workspace.asRelativePath(location.uri));
+        const target = buildLocationUriString(location.uri, position);
+        return `[${label}](${target})`;
     }
 
     private async getStoreLikeNames(document: vscode.TextDocument): Promise<string[]> {
@@ -260,4 +298,22 @@ export class VuexHoverProvider implements vscode.HoverProvider {
         }
         return names;
     }
+}
+
+function locationStart(location: vscode.Location): vscode.Position | undefined {
+    const range = (location as any).range;
+    if (range?.start) return range.start;
+
+    const rangeOrPosition = (location as any).rangeOrPosition;
+    if (rangeOrPosition?.start) return rangeOrPosition.start;
+    if (typeof rangeOrPosition?.line === 'number') return rangeOrPosition;
+    return undefined;
+}
+
+function shouldCheckLocalBindingForMappedItem(rawPrefix: string, thisAliases: readonly string[]): boolean {
+    return !isThisAliasMemberPrefix(rawPrefix, thisAliases);
+}
+
+function isCommitDispatchContext(method: string): boolean {
+    return method === 'commit' || method === 'dispatch';
 }

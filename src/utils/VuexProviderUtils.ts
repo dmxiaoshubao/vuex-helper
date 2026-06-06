@@ -94,7 +94,7 @@ export function extractBracketPath(rawPrefix: string, keyword: string): string |
     return match[1] || '';
 }
 
-/** 从光标位置提取字符串字面量路径（支持 'a/b'） */
+/** 从光标位置提取静态字符串字面量路径（支持 'a/b' 与无插值模板串） */
 export function extractStringLiteralPathAtPosition(
     document: vscode.TextDocument,
     position: vscode.Position
@@ -125,10 +125,24 @@ export function extractStringLiteralPathAtPosition(
     if (end < 0) return undefined;
 
     if (cursor <= start || cursor > end) return undefined;
+    const literalContent = lineText.substring(start + 1, end);
+    if (!isStaticVuexStringLiteralContent(literalContent, quoteChar)) return undefined;
+    if (isStringLiteralPartOfConcatExpression(lineText, start, end)) return undefined;
+
     return {
-        path: lineText.substring(start + 1, end).trim(),
+        path: literalContent.trim(),
         range: new vscode.Range(position.line, start, position.line, end + 1),
     };
+}
+
+export function isStaticVuexStringLiteralContent(content: string, quoteChar: string): boolean {
+    return quoteChar !== '`' || !content.includes('${');
+}
+
+function isStringLiteralPartOfConcatExpression(lineText: string, start: number, end: number): boolean {
+    const before = lineText.substring(0, start).trimEnd();
+    const after = lineText.substring(end + 1).trimStart();
+    return before.endsWith('+') || after.startsWith('+');
 }
 
 /** 检测字符串前缀是否是 store getter/state 方括号访问 */
@@ -290,24 +304,102 @@ export function hasChainedPropertySuffix(rawSuffix: string): boolean {
 export function resolveMappedItem(
     mapping: Record<string, VuexMappedInfo>,
     rawPrefix: string,
-    word: string
+    word: string,
+    thisAliases: readonly string[] = ['this', 'vm']
 ): VuexMappedInfo | undefined {
     const direct = mapping[word];
     if (direct) {
         const normalizedPrefix = rawPrefix.replace(/\?\./g, '.').trimEnd();
         if (
             !normalizedPrefix.endsWith('.') ||
-            /\b(?:this|vm)\.$/.test(normalizedPrefix)
+            isThisAliasMemberPrefix(normalizedPrefix, thisAliases)
         ) {
             return direct;
         }
     }
 
-    const bracketMappedPathPrefix = extractBracketPath(rawPrefix, 'this') ?? extractBracketPath(rawPrefix, 'vm');
+    const bracketMappedPathPrefix = thisAliases
+        .map((alias) => extractBracketPath(rawPrefix, alias))
+        .find((value): value is string => value !== undefined);
     if (!bracketMappedPathPrefix) return undefined;
 
     const fullMappedKey = `${bracketMappedPathPrefix}${word}`;
     return mapping[fullMappedKey];
+}
+
+export function collectThisAliasNames(
+    document: vscode.TextDocument,
+    position?: vscode.Position
+): string[] {
+    const aliases = new Set<string>(['this', 'vm']);
+
+    if (position) {
+        const scopePath = findFullScopePathAtPosition(document, position) ?? findScopePathAtPosition(document, position);
+        let scope = scopePath?.scope;
+        while (scope) {
+            for (const name of Object.keys(scope.bindings || {})) {
+                const binding = scope.bindings[name];
+                if (isThisAliasBinding(binding)) aliases.add(name);
+            }
+            scope = scope.parent;
+        }
+        return Array.from(aliases);
+    }
+
+    const source = document.getText();
+    const aliasRegex = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*this\b/g;
+    for (const match of source.matchAll(aliasRegex)) {
+        if (match[1]) aliases.add(match[1]);
+    }
+    return Array.from(aliases);
+}
+
+function isThisAliasBinding(binding: any): boolean {
+    const declarator = binding?.path?.node;
+    return declarator?.type === 'VariableDeclarator'
+        && declarator.id?.type === 'Identifier'
+        && declarator.init?.type === 'ThisExpression';
+}
+
+export function isThisAliasMemberPrefix(rawPrefix: string, thisAliases: readonly string[] = ['this', 'vm']): boolean {
+    const normalizedPrefix = rawPrefix.replace(/\?\./g, '.').trimEnd();
+    return thisAliases.some((alias) => new RegExp(`\\b${escapeRegex(alias)}\\.$`).test(normalizedPrefix));
+}
+
+/** 判断当前位置的标识符是否已被当前脚本作用域声明，避免同名局部变量误命中 Vuex 映射字段。 */
+export function hasLocalBindingAtPosition(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    name: string
+): boolean {
+    const analysis = getProviderScriptAnalysis(document);
+    if (analysis.script?.content && analysis.ast) {
+        const documentOffset = document.offsetAt(position);
+        const localOffset = documentOffset - analysis.script.offset;
+        if (localOffset >= 0 && localOffset <= analysis.script.content.length) {
+            let matched = false;
+            traverse(analysis.ast, {
+                Identifier(path: any) {
+                    const node = path.node;
+                    if (node.name !== name) return;
+                    const start = node.start ?? -1;
+                    const end = node.end ?? -1;
+                    if (localOffset < start || localOffset > end) return;
+                    if (!path.isReferencedIdentifier() && !path.isBindingIdentifier()) return;
+
+                    matched = !!path.scope.getBinding(name);
+                    path.stop();
+                },
+            } as any);
+            if (matched) return true;
+        }
+    }
+
+    const scopePath = findScopePathAtPosition(document, position);
+    if (!scopePath) return false;
+
+    const binding = scopePath.scope?.getBinding?.(name);
+    return !!binding;
 }
 
 /** 构建查找候选项，统一处理命名空间和点号路径 */
@@ -817,6 +909,50 @@ function findScopePathAtPosition(document: vscode.TextDocument, position: vscode
     } as any);
 
     analysis.scopePathCache.set(localOffset, bestPath ?? null);
+    return bestPath;
+}
+
+function findFullScopePathAtPosition(document: vscode.TextDocument, position: vscode.Position): any | undefined {
+    const analysis = getProviderScriptAnalysis(document);
+    if (!analysis.script || !analysis.ast) return undefined;
+
+    const documentOffset = document.offsetAt(position);
+    const localOffset = documentOffset - analysis.script.offset;
+    if (localOffset < 0 || localOffset > analysis.script.content.length) return undefined;
+
+    let bestPath: any | undefined;
+    let bestSpan = Number.POSITIVE_INFINITY;
+
+    traverse(analysis.ast, {
+        Program(path: any) {
+            const start = path.node.start ?? 0;
+            const end = path.node.end ?? 0;
+            if (localOffset < start || localOffset > end) return;
+            bestPath = path;
+            bestSpan = end - start;
+        },
+        Function(path: any) {
+            const start = path.node.start ?? 0;
+            const end = path.node.end ?? 0;
+            if (localOffset < start || localOffset > end) return;
+            const span = end - start;
+            if (span <= bestSpan) {
+                bestPath = path;
+                bestSpan = span;
+            }
+        },
+        BlockStatement(path: any) {
+            const start = path.node.start ?? 0;
+            const end = path.node.end ?? 0;
+            if (localOffset < start || localOffset > end) return;
+            const span = end - start;
+            if (span <= bestSpan) {
+                bestPath = path;
+                bestSpan = span;
+            }
+        },
+    } as any);
+
     return bestPath;
 }
 

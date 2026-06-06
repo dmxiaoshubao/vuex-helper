@@ -29,6 +29,7 @@ class MockStoreIndexer extends StoreIndexer {
             getters: [
                 { name: 'isAdmin', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 50) },
                 { name: 'isActive', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 40) },
+                { name: 'encryptedData', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 42) },
                 { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 41) }
             ],
             mutations: [],
@@ -214,6 +215,8 @@ describe('VuexHoverProvider state access', () => {
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('State: profile.name'), 'Hover should include full state path');
         assert.ok(md.includes('/mock/workspace/src/store/modules/user.js'), 'Hover should include definition file');
+        assert.ok(md.includes(']('), 'Hover definition path should be a markdown link');
+        assert.ok(md.includes('#L21,1'), 'Hover definition link should include line fragment');
     });
 
     it('should not provide Vuex hover when nested leaf does not exist', async () => {
@@ -225,6 +228,41 @@ describe('VuexHoverProvider state access', () => {
 
         const hover = await provider.provideHover(document, { line: 5, character: char } as any, {} as any);
         assert.strictEqual(hover, undefined, 'Hover should not fallback to parent state');
+    });
+
+    it('should not treat a local destructured variable as a mapped getter', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ hasNotifications: 'others/hasNotifications' })\n  },\n  methods: {\n    run(payload) {\n      const { hasNotifications } = payload\n      if (hasNotifications) return true\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[9];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 9, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Local variable should not resolve to mapped Vuex getter');
+    });
+
+    it('should show hover for mapped getter accessed through a this alias', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ encryptedData: 'user/encryptedData' })\n  },\n  methods: {\n    run() {\n      const __this = this\n      console.log(__this.encryptedData)\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[9];
+        const char = line.indexOf('encryptedData') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 9, character: char } as any, {} as any);
+        assert.ok(hover, 'Hover should resolve through this alias');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Getter: user/encryptedData'), 'Hover should include mapped getter path');
+    });
+
+    it('should not leak a this alias across method scopes', async () => {
+        const provider = new VuexHoverProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ encryptedData: 'user/encryptedData' })\n  },\n  methods: {\n    first() {\n      const __this = this\n    },\n    second(api) {\n      const __this = api\n      console.log(__this.encryptedData)\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[12];
+        const char = line.indexOf('encryptedData') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 12, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Out-of-scope this alias should not resolve mapped Vuex getter');
     });
 });
 
@@ -263,6 +301,39 @@ describe('VuexHoverProvider commit/dispatch context', () => {
         assert.ok(hover, 'Hover should be resolved');
         const md = (hover as any).contents?.value || '';
         assert.ok(md.includes('/mock/workspace/src/store/index.js'), 'Hover should resolve to root mutation');
+    });
+
+    it('should resolve hover for static template literal commit paths', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = "this.$store.commit(`others/SET_THEME`)";
+        const char = text.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.ok(hover, 'Static template literal path should resolve hover');
+        const md = (hover as any).contents?.value || '';
+        assert.ok(md.includes('Mutation: SET_THEME'), 'Hover should resolve the mutation name');
+        assert.ok(md.includes('/mock/workspace/src/store/modules/others.js'), 'Hover should resolve to namespaced mutation');
+    });
+
+    it('should not resolve hover for interpolated template literal commit paths', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = "this.$store.commit(`${this.$route.meta.vuexName}/SET_THEME`, {})";
+        const char = text.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Dynamic template literal path should not be guessed');
+    });
+
+    it('should not resolve hover for concatenated commit path fragments', async () => {
+        const provider = new VuexHoverProvider(new MockCommitHoverStoreIndexer());
+        const text = "const name = this.$route.meta.vuexName; this.$store.commit(name + '/SET_THEME', {})";
+        const char = text.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const hover = await provider.provideHover(document, { line: 0, character: char } as any, {} as any);
+        assert.strictEqual(hover, undefined, 'Concatenated path fragment should not be guessed');
     });
 
     it('should prefer root action hover for this alias optional chain dispatch in module file', async () => {

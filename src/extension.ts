@@ -5,6 +5,7 @@ import { StoreIndexer } from './services/StoreIndexer';
 import { VuexDefinitionProvider } from './providers/VuexDefinitionProvider';
 import { VuexCompletionItemProvider } from './providers/VuexCompletionItemProvider';
 import { VuexHoverProvider } from './providers/VuexHoverProvider';
+import { VuexReferenceProvider } from './providers/VuexReferenceProvider';
 import { ReindexScheduler } from './services/ReindexScheduler';
 import { ComponentMapper } from './services/ComponentMapper';
 import { VuexDiagnosticProvider } from './services/VuexDiagnosticProvider';
@@ -217,7 +218,8 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.languages.registerDefinitionProvider(selector, new VuexDefinitionProvider(storeIndexer, sharedComponentMapper)),
         vscode.languages.registerCompletionItemProvider(selector, new VuexCompletionItemProvider(storeIndexer, sharedComponentMapper), "'", '"', '.'),
-        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper))
+        vscode.languages.registerHoverProvider(selector, new VuexHoverProvider(storeIndexer, sharedComponentMapper)),
+        vscode.languages.registerReferenceProvider(selector, new VuexReferenceProvider(storeIndexer, sharedComponentMapper))
     );
 
     // 文档关闭时清除诊断

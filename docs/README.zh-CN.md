@@ -21,7 +21,14 @@
 - **命名空间**: 完美支持 Namespaced 模块及其嵌套。
 - **可选链**: 支持 `?.` 形式的 store 访问链。
 
-### 2. 智能代码补全 (Intelligent Code Completion)
+### 2. 查找引用 (Find References)
+
+可以从 Vuex 定义处反查所有可静态解析的使用位置。
+
+- **定义处引用查找**: 在 state、getter、mutation 或 action 定义名上执行 **Find All References**（`Shift+F12`），可列出组件与 store 内部的引用。
+- **支持的使用形式**: 覆盖 map 辅助函数、`$store.commit/dispatch`、直接导入 store 实例调用，以及 store 内部 `commit/dispatch` 引用。
+
+### 3. 智能代码补全 (Intelligent Code Completion)
 
 智能提示 Vuex 的各种 Key 以及组件中映射的方法。
 
@@ -38,7 +45,7 @@
 - **语法支持**: 支持数组语法和对象别名语法 (例如 `...mapActions({ alias: 'name' })`)。
 - **导入 Store 补全**: 支持 `import store from '@/store'` 后的 `store.state/getters/commit/dispatch` 补全。
 
-### 3. 悬浮提示与类型推导 (Hover Information & Type Inference)
+### 4. 悬浮提示与类型推导 (Hover Information & Type Inference)
 
 无需跳转即可查看文档、类型详情。
 
@@ -48,11 +55,11 @@
 
 - **JSDoc 支持**: 提取并显示 Store 定义处的 `/** ... */` 注释文档。
 - **State 类型**: 在悬浮提示中自动推导并显示 State 属性的类型 (例如 `(State) appName: string`)。
-- **详细信息**: 显示类型（State/Mutation等）及定义所在的文件路径。
+- **详细信息**: 显示类型（State/Mutation等）及可点击跳转的定义文件路径。
 - **映射方法**: 支持查看映射方法的 Store 文档。
 - **导入 Store 悬浮**: 支持直接导入 store 实例后的悬浮提示。
 
-### 4. Store 内部调用 (Store Internal Usage)
+### 5. Store 内部调用 (Store Internal Usage)
 
 同样支持在 Vuex Store 内部 代码补全、跳转、悬浮提示。
 
@@ -64,7 +71,7 @@
 - **Action Context 对象写法**: 支持在 store 文件里识别 `context.state`、`context.getters`、`context.rootState`、`context.rootGetters`。
 - **对象式 Action Handler**: 支持 `actions: { someAction: { handler(ctx) {}, root: true } }` 这类 Vuex 对象式 action 写法。
 
-### 5. 诊断 (Diagnostics)
+### 6. 诊断 (Diagnostics)
 
 在编辑器中直接以 Warning 标记不存在的 Vuex Store 引用。
 
@@ -75,7 +82,7 @@
 - **全局 Getter 冲突**: 当根模块或非命名空间模块注册了重复的全局 getter 名时给出 Warning。
 - **注释行规避**: 对整行注释中的常见引用不报 Warning。
 
-### 6. 重索引命令 (Reindex Command)
+### 7. 重索引命令 (Reindex Command)
 
 通过命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`）执行 **"Vuex Helper: Reindex Store"** 手动触发 store 全量重索引。
 
@@ -95,10 +102,14 @@
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  this.$store.commit(`user/SET_NAME`, value); // 支持纯静态模板串
   import store from "@/store";
   store.commit("SET_NAME", value);
   store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // 根命名空间切换
+  // 动态 Vuex 路径不会被猜测识别：
+  // this.$store.commit(`${moduleName}/SET_NAME`, value);
+  // this.$store.commit(moduleName + "/SET_NAME", value);
   actions: {
     publishProfile: {
       handler(context) {
@@ -129,6 +140,7 @@
 | `this.$store.state/getters/commit/dispatch` | ✅   | 点号和方括号语法                                   |
 | 导入 store 实例访问                          | ✅   | `import store from '@/store'`                      |
 | Store 可选链访问                              | ✅   | `this.$store?.getters?.['a/b']`                    |
+| 静态 Vuex 字符串路径                         | ✅   | 支持 `'a/b'`、`"a/b"`、`` `a/b` ``；忽略模板插值和字符串拼接这类动态路径 |
 | `createNamespacedHelpers`                   | ✅   |                                                    |
 | 对象风格 commit                             | ✅   | `commit({ type: 'inc' })`                          |
 | `state` 函数形式                            | ✅   | `state: () => ({})`                                |
@@ -139,6 +151,8 @@
 | `this` 别名补全                             | ✅   | `const _t = this; _t.`                             |
 | `{ root: true }` 命名空间切换               | ✅   | commit/dispatch 的 root 选项                       |
 | State 链式路径中间词跳转                    | ✅   | 点击 `state.user.name` 中的 `user`                 |
+| Hover `Defined in` 路径跳转                 | ✅   | 点击悬浮提示中的定义路径直接打开目标位置           |
+| Vuex 定义处查找引用                         | ✅   | 在 state/getter/mutation/action 定义名上 `Shift+F12` |
 | Vuex 依赖检测                              | ✅   | 当工作区 `package.json` 不含 `vuex` 依赖且未配置 `vuexHelper.storeEntry` 时静默不激活 |
 | `rootState` / `rootGetters`                 | ✅   | 完整支持补全、跳转和悬浮提示                       |
 | `context.state` / `context.getters`         | ✅   | store 文件中的补全、跳转、悬浮与诊断               |
@@ -164,6 +178,19 @@
   - 绝对路径: `/Users/xxx/project/src/store/index.js`
 
 ## 更新日志
+
+### 1.3.0
+
+本次为功能增强版本，重点补齐导航、引用查找与发布包体治理：
+
+- **新增**: Vuex 定义处支持 **Find All References**。在 state、getter、mutation 或 action 定义名上执行 `Shift+F12`，可查找可静态解析的使用位置。
+- **新增**: 悬浮提示中的 `Defined in` 路径支持点击跳转，可直接从 hover 弹窗打开定义位置。
+- **修复**: 映射 Vuex 字段不再覆盖同名局部变量，避免在组件 methods、computed 函数等局部作用域中出现错误的 Vuex hover / definition。
+- **修复**: `` `${moduleName}/SET_NAME` ``、`moduleName + '/SET_NAME'` 这类动态 `commit/dispatch` 路径不再被猜测成静态 Vuex 引用；`` `user/SET_NAME` `` 这类纯静态模板串仍可正常识别。
+- **优化**: `this` 别名识别支持当前作用域内绑定到 `this` 的任意别名，不再局限于固定名称。
+- **优化**: Store 入口自动探测移除运行时 `glob` 依赖，改为直接检查支持的 `src/main|index.{js,ts}` 入口候选。
+- **优化**: VSIX 打包排除生成测试、内部文档与本地 GIF 资源；Marketplace 演示图片改由配置的 GitHub raw 基础路径提供，不再进入包体。
+- **安全**: 移除运行时 `glob` 依赖，并通过 `serialize-javascript` override 保持 `npm audit` 无漏洞。
 
 ### 1.2.2
 

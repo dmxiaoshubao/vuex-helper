@@ -17,6 +17,9 @@ import {
     hasScopedVuexCallContext,
     hasParamContextMemberAccess,
     hasParamBindingMemberAccess,
+    hasLocalBindingAtPosition,
+    collectThisAliasNames,
+    isThisAliasMemberPrefix,
     resolveMappedItem,
 } from '../utils/VuexProviderUtils';
 
@@ -61,7 +64,10 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
 
         const rawPrefix = lineText.substring(0, range.start.character);
         const mapping = this.componentMapper.getMapping(document);
-        const mappedItem = resolveMappedItem(mapping, rawPrefix, word);
+        const thisAliases = collectThisAliasNames(document, position);
+        const mappedItem = shouldCheckLocalBindingForMappedItem(rawPrefix, thisAliases) && hasLocalBindingAtPosition(document, position, word)
+            ? undefined
+            : resolveMappedItem(mapping, rawPrefix, word, thisAliases);
         if (mappedItem) {
             return this.findDefinition(mappedItem.originalName, mappedItem.type, mappedItem.namespace);
         }
@@ -261,6 +267,9 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
             // 3. Try VuexContextScanner (for String Literal contexts like mapState('...'))
             // Note: extractStringLiteralPathAtPosition result is reused from earlier call
             const explicitPath = stringLiteralObj ? stringLiteralObj.path : undefined;
+            if (isCommitDispatchContext(scopedContext.method) && !explicitPath) {
+                return undefined;
+            }
 
             // mapState/mapGetters/mapMutations/mapActions('namespace', [...])
             // 首参是独立 namespace 时，跳转到对应模块文件。
@@ -347,4 +356,12 @@ export class VuexDefinitionProvider implements vscode.DefinitionProvider {
         }
         return names;
     }
+}
+
+function shouldCheckLocalBindingForMappedItem(rawPrefix: string, thisAliases: readonly string[]): boolean {
+    return !isThisAliasMemberPrefix(rawPrefix, thisAliases);
+}
+
+function isCommitDispatchContext(method: string): boolean {
+    return method === 'commit' || method === 'dispatch';
 }

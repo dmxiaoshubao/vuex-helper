@@ -1,8 +1,9 @@
 // Centralized vscode runtime mock for unit testing
 export class Uri {
-    constructor(public fsPath: string, public scheme: string = 'file') {}
+    constructor(public fsPath: string, public scheme: string = 'file', public fragment: string = '') {}
     static file(path: string) { return new Uri(path); }
-    toString() { return `${this.scheme}://${this.fsPath}`; }
+    with(change: { fragment?: string }) { return new Uri(this.fsPath, this.scheme, change.fragment ?? this.fragment); }
+    toString() { return `${this.scheme}://${this.fsPath}${this.fragment ? `#${this.fragment}` : ''}`; }
 }
 
 export class Position {
@@ -129,6 +130,8 @@ export const workspace = {
     onDidCreateFiles: (_listener: any) => noopDisposable,
     onDidDeleteFiles: (_listener: any) => noopDisposable,
     onDidRenameFiles: (_listener: any) => noopDisposable,
+    findFiles: async (_include: any, _exclude?: any) => [] as Uri[],
+    openTextDocument: async (_uri: any) => undefined,
     textDocuments: [] as any[]
 };
 
@@ -145,6 +148,7 @@ export const languages = {
     registerDefinitionProvider: (_selector: any, _provider: any) => noopDisposable,
     registerCompletionItemProvider: (_selector: any, _provider: any, ..._triggerCharacters: string[]) => noopDisposable,
     registerHoverProvider: (_selector: any, _provider: any) => noopDisposable,
+    registerReferenceProvider: (_selector: any, _provider: any) => noopDisposable,
     createDiagnosticCollection: (_name?: string) => ({
         set: (_uri: any, _diagnostics: any) => undefined,
         delete: (_uri: any) => undefined,

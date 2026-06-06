@@ -23,7 +23,14 @@ Jump directly to the definition of Vuex store properties from your components.
 - **Namespace**: Supports namespaced modules.
 - **Optional Chaining**: Supports `?.` in store access chains.
 
-### 2. Intelligent Code Completion (IntelliSense)
+### 2. Find References
+
+Find every statically resolvable Vuex usage from the store definition itself.
+
+- **Definition-Side References**: Run **Find All References** (`Shift+F12`) on a state, getter, mutation, or action definition to list its component and store usages.
+- **Supported Usage Forms**: Covers map helpers, `$store.commit/dispatch`, imported store instance calls, and store-internal `commit/dispatch` references.
+
+### 3. Intelligent Code Completion (IntelliSense)
 
 Intelligent suggestions for Vuex keys and mapped methods.
 
@@ -40,7 +47,7 @@ Intelligent suggestions for Vuex keys and mapped methods.
 - **Map Helpers**: Supports array and object syntax (e.g., `...mapActions({ alias: 'name' })`).
 - **Imported Store Completion**: Supports `store.state/getters/commit/dispatch` after direct store import.
 
-### 3. Hover Information & Type Inference
+### 4. Hover Information & Type Inference
 
 View JSDoc documentation, details, and inferred types without leaving your code.
 
@@ -51,10 +58,10 @@ View JSDoc documentation, details, and inferred types without leaving your code.
 - **JSDoc Support**: Displays comments written in `/** ... */` format from your store definitions.
 - **Type Inference**: Automatically infers and displays the type of State properties in hover tooltips (e.g., `(State) appName: string`).
 - **Mapped Methods**: View documentation for mapped methods.
-- **Details**: Shows the type (State/Mutation/etc.) and the file path of the definition.
+- **Details**: Shows the type (State/Mutation/etc.) and a clickable definition path.
 - **Imported Store Hover**: Supports hover info for direct store import usage.
 
-### 4. Store Internal Usage
+### 5. Store Internal Usage
 
 Also supports code completion, jump to definition, and hover information within the Vuex Store.
 
@@ -66,7 +73,7 @@ Also supports code completion, jump to definition, and hover information within 
 - **Action Context Object**: Supports `context.state`, `context.getters`, `context.rootState`, and `context.rootGetters` in store files.
 - **Object-Style Handlers**: Supports Vuex object-style action handlers such as `actions: { someAction: { handler(ctx) {}, root: true } }`.
 
-### 5. Diagnostics
+### 6. Diagnostics
 
 Highlights invalid Vuex store references as warnings directly in your editor.
 
@@ -77,7 +84,7 @@ Highlights invalid Vuex store references as warnings directly in your editor.
 - **Global Getter Conflicts**: Warns when root or non-namespaced modules register duplicate global getter names.
 - **Comment Lines**: Skips common commented-out references on full comment lines.
 
-### 6. Reindex Command
+### 7. Reindex Command
 
 Run **"Vuex Helper: Reindex Store"** from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) to manually trigger a full store re-index.
 
@@ -103,10 +110,14 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
   ```javascript
   this.$store.commit("SET_NAME", value);
   this.$store.dispatch("user/updateName", value);
+  this.$store.commit(`user/SET_NAME`, value); // Static template literals are supported
   import store from "@/store";
   store.commit("SET_NAME", value);
   store?.getters?.["others/hasNotifications"];
   commit("increment", null, { root: true }); // Root namespace switch
+  // Dynamic Vuex paths are not guessed:
+  // this.$store.commit(`${moduleName}/SET_NAME`, value);
+  // this.$store.commit(moduleName + "/SET_NAME", value);
   actions: {
     publishProfile: {
       handler(context) {
@@ -137,6 +148,7 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | `this.$store.state/getters/commit/dispatch` | ✅     | Dot and bracket notation                           |
 | Imported store instance access              | ✅     | `import store from '@/store'`                      |
 | Store access optional chaining              | ✅     | `this.$store?.getters?.['a/b']`                    |
+| Static Vuex string paths                     | ✅     | Supports `'a/b'`, `"a/b"`, and `` `a/b` ``; dynamic template interpolation and string concatenation are ignored |
 | `createNamespacedHelpers`                   | ✅     |                                                    |
 | Object-style commit                         | ✅     | `commit({ type: 'inc' })`                          |
 | `state` as function                         | ✅     | `state: () => ({})`                                |
@@ -147,6 +159,8 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | `this` alias completion                     | ✅     | `const _t = this; _t.`                             |
 | `{ root: true }` namespace switch           | ✅     | commit/dispatch with root option                   |
 | State chain intermediate jump               | ✅     | Click `user` in `state.user.name`                  |
+| Hover `Defined in` navigation               | ✅     | Click the hover definition path to open the target |
+| Find references from Vuex definitions       | ✅     | `Shift+F12` on state/getter/mutation/action definitions |
 | Vuex dependency detection                  | ✅     | Silent deactivation when workspace `package.json` has no `vuex` dependency and `vuexHelper.storeEntry` is unset |
 | `rootState` / `rootGetters`                 | ✅     | Full support for completion, definition, and hover |
 | `context.state` / `context.getters`         | ✅     | Store-file completion, definition, hover, and diagnostics |
@@ -157,6 +171,19 @@ You can configure the extension via the VS Code Settings UI or `.vscode/settings
 | Manual reindex command                      | ✅     | `vuexHelper.reindex` via Command Palette           |
 
 ## Release Notes
+
+### 1.3.0
+
+Feature release focused on navigation, references, and packaging hardening:
+
+- **Added**: Vuex definitions now support **Find All References**. Run `Shift+F12` on a store state, getter, mutation, or action definition to find statically resolvable usages.
+- **Added**: Hover `Defined in` paths are clickable links, so you can jump to the definition directly from the hover popup.
+- **Fixed**: Mapped Vuex fields no longer shadow local variables with the same name, avoiding false Vuex hover/definition results in component methods and computed functions.
+- **Fixed**: Dynamic `commit/dispatch` paths such as `` `${moduleName}/SET_NAME` `` and `moduleName + '/SET_NAME'` are no longer guessed as static Vuex references, while static template literals like `` `user/SET_NAME` `` still resolve normally.
+- **Improved**: `this` alias detection now supports aliases bound to `this` in local scope, not only hard-coded names.
+- **Improved**: Store entry auto-detection no longer depends on the runtime `glob` package; it checks the supported `src/main|index.{js,ts}` entry candidates directly.
+- **Improved**: VSIX packaging excludes generated tests, internal docs, and local GIF assets. Marketplace demo images are served through the configured GitHub raw base URL instead of being bundled.
+- **Security**: Removed the runtime `glob` dependency and added a `serialize-javascript` override to keep `npm audit` clean.
 
 ### 1.2.2
 

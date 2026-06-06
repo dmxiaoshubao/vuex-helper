@@ -1,6 +1,6 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import Mocha from 'mocha';
-import { glob } from 'glob';
 
 export async function run(): Promise<void> {
     const mocha = new Mocha({
@@ -10,7 +10,7 @@ export async function run(): Promise<void> {
     });
 
     const testsRoot = __dirname;
-    const files = await glob('**/*.test.js', { cwd: testsRoot });
+    const files = await collectTestFiles(testsRoot, testsRoot);
     files.forEach((f: string) => mocha.addFile(path.resolve(testsRoot, f)));
 
     return new Promise((resolve, reject) => {
@@ -28,3 +28,18 @@ export async function run(): Promise<void> {
     });
 }
 
+async function collectTestFiles(dir: string, root: string): Promise<string[]> {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await collectTestFiles(fullPath, root));
+        } else if (entry.isFile() && entry.name.endsWith('.test.js')) {
+            files.push(path.relative(root, fullPath));
+        }
+    }
+
+    return files.sort();
+}

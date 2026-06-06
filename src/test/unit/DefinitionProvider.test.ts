@@ -32,6 +32,7 @@ class MockStoreIndexer extends StoreIndexer {
             getters: [
                 { name: 'isAdmin', modulePath: [], defLocation: mkLoc(path.join(root, 'src/store/index.js'), 50) },
                 { name: 'isActive', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 40) },
+                { name: 'encryptedData', modulePath: ['user'], defLocation: mkLoc(path.join(root, 'src/store/modules/user.js'), 42) },
                 { name: 'hasNotifications', modulePath: ['others'], defLocation: mkLoc(path.join(root, 'src/store/modules/others.js'), 41) }
             ],
             mutations: [
@@ -181,6 +182,53 @@ function createAliasWorkspace() {
 }
 
 describe('VuexDefinitionProvider namespaced', () => {
+    it('should not jump from a local destructured variable to a mapped getter', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ hasNotifications: 'others/hasNotifications' })\n  },\n  methods: {\n    run(payload) {\n      const { hasNotifications } = payload\n      if (hasNotifications) return true\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[9];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 9, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Local variable should not resolve to mapped Vuex getter');
+    });
+
+    it('should still jump from this mapped getter when a local variable has the same name', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ hasNotifications: 'others/hasNotifications' })\n  },\n  methods: {\n    run() {\n      const hasNotifications = false\n      return this.hasNotifications\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[9];
+        const char = line.indexOf('hasNotifications') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 9, character: char } as any, {} as any);
+        assert.ok(definition, 'this.hasNotifications should still resolve to mapped Vuex getter');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+    });
+
+    it('should jump for mapped getter accessed through any this alias', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ encryptedData: 'user/encryptedData' })\n  },\n  methods: {\n    run() {\n      const that = this\n      console.log(that.encryptedData)\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[9];
+        const char = line.indexOf('encryptedData') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 9, character: char } as any, {} as any);
+        assert.ok(definition, 'Mapped getter should resolve through arbitrary this alias');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/user.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 42);
+    });
+
+    it('should not leak a this alias across method scopes', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = `<script>\nimport { mapGetters } from 'vuex'\nexport default {\n  computed: {\n    ...mapGetters({ encryptedData: 'user/encryptedData' })\n  },\n  methods: {\n    first() {\n      const that = this\n    },\n    second(api) {\n      const that = api\n      console.log(that.encryptedData)\n    }\n  }\n}\n</script>`;
+        const line = text.split('\n')[12];
+        const char = line.indexOf('encryptedData') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 12, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Out-of-scope this alias should not resolve mapped Vuex getter');
+    });
+
     it('should jump to the explicit namespaced mutation for commit path', async () => {
         const provider = new VuexDefinitionProvider(new MockStoreIndexer());
         const text = `<script>\nexport default { methods: { run() { this.$store.commit('others/SET_NAME') } } }\n</script>`;
@@ -706,6 +754,41 @@ describe('VuexDefinitionProvider namespace segment jump', () => {
         assert.ok(definition, 'Definition should be resolved for item name');
         assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
         assert.strictEqual((definition as any).rangeOrPosition.line, 8, 'Should jump to item definition line');
+    });
+
+    it('should resolve static template literal commit paths', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = "<script>\nexport default { methods: { run() { this.$store.commit(`others/SET_THEME`) } } }\n</script>";
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.ok(definition, 'Static template literal path should resolve');
+        assert.strictEqual((definition as any).uri.fsPath, '/mock/workspace/src/store/modules/others.js');
+        assert.strictEqual((definition as any).rangeOrPosition.line, 8);
+    });
+
+    it('should not resolve interpolated template literal commit paths', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = "<script>\nexport default { methods: { run() { this.$store.commit(`${this.$route.meta.vuexName}/SET_THEME`, {}) } } }\n</script>";
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Dynamic template literal path should not be guessed');
+    });
+
+    it('should not resolve concatenated commit path fragments', async () => {
+        const provider = new VuexDefinitionProvider(new MockStoreIndexer());
+        const text = "<script>\nexport default { methods: { run() { const name = this.$route.meta.vuexName; this.$store.commit(name + '/SET_THEME', {}) } } }\n</script>";
+        const line = text.split('\n')[1];
+        const char = line.indexOf('SET_THEME') + 2;
+        const document = createDocument(text, '/mock/workspace/src/components/App.vue');
+
+        const definition = await provider.provideDefinition(document, { line: 1, character: char } as any, {} as any);
+        assert.strictEqual(definition, undefined, 'Concatenated path fragment should not be guessed');
     });
 
     it('should jump to module file top when clicking namespace in mapGetters array slash path', async () => {

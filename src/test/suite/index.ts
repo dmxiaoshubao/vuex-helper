@@ -1,6 +1,6 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import Mocha from 'mocha';
-import { glob } from 'glob';
 
 export async function run(): Promise<void> {
 	// Create the mocha test
@@ -11,7 +11,7 @@ export async function run(): Promise<void> {
 
 	const testsRoot = path.resolve(__dirname, '..');
 	const setupFile = path.resolve(testsRoot, 'setup.js');
-	const files = await glob('unit/**/*.test.js', { cwd: testsRoot });
+	const files = await collectTestFiles(path.join(testsRoot, 'unit'), testsRoot);
 
 	// Load global test setup first (vscode runtime mock, shared hooks, etc.).
 	mocha.addFile(setupFile);
@@ -34,4 +34,20 @@ export async function run(): Promise<void> {
 			reject(err);
 		}
 	});
+}
+
+async function collectTestFiles(dir: string, root: string): Promise<string[]> {
+	const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+	const files: string[] = [];
+
+	for (const entry of entries) {
+		const fullPath = path.join(dir, entry.name);
+		if (entry.isDirectory()) {
+			files.push(...await collectTestFiles(fullPath, root));
+		} else if (entry.isFile() && entry.name.endsWith('.test.js')) {
+			files.push(path.relative(root, fullPath));
+		}
+	}
+
+	return files.sort();
 }

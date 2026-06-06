@@ -2,8 +2,14 @@
 .vscode-test/**
 src/**
 test/**
+out/test/**
 tsconfig.json
 .gitignore
 vsc-extension-quickstart.md
 **/*.map
 **/*.ts
+images/*.gif
+AGENTS.md
+.claude/**
+docs/quality/**
+docs/task/**

@@ -2,6 +2,28 @@
 
 All notable changes to the "Vuex Helper" extension will be documented in this file.
 
+## [1.3.0] - 2026-06-06
+
+### Added
+
+- **Find references from Vuex definitions**: State, getter, mutation, and action definitions now support **Find All References** (`Shift+F12`) for statically resolvable component and store usages.
+- **Clickable hover definition paths**: Hover `Defined in` paths now open the target definition location directly.
+
+### Fixed
+
+- **Local variable false positives**: Mapped Vuex fields no longer shadow local variables with the same name in component methods and computed functions.
+- **Dynamic Vuex path guessing**: Dynamic `commit/dispatch` paths such as `` `${moduleName}/SET_NAME` `` and `moduleName + '/SET_NAME'` are no longer guessed as static Vuex references. Pure static strings still resolve, including `'user/SET_NAME'`, `"user/SET_NAME"`, and `` `user/SET_NAME` ``.
+
+### Improved
+
+- **Flexible `this` aliases**: Hover, definition, and completion now support aliases bound to `this` in local scope instead of relying only on fixed alias names.
+- **Store entry detection**: Auto-detection no longer depends on the runtime `glob` package and directly checks supported `src/main|index.{js,ts}` entry candidates.
+- **VSIX package size**: Generated tests, internal docs, and local GIF assets are excluded from the package. Marketplace demo images are served through the configured GitHub raw base URL.
+
+### Security
+
+- **Dependency cleanup**: Removed the runtime `glob` dependency and added a `serialize-javascript` override to keep `npm audit` clean.
+
 ## [1.2.2] - 2026-04-01
 
 ### Fixed
